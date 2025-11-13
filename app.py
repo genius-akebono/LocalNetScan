@@ -266,19 +266,54 @@ def startup_scan():
 
 
 if __name__ == '__main__':
+    import socket
+
     print("\n" + "="*60)
     print("LocalNetScan - ローカルネットワークスキャナー")
     print("="*60)
     print("✓ アプリケーションを起動しています...")
-    print("✓ ブラウザで http://127.0.0.1:5000 にアクセスしてください")
-    print("="*60)
 
     # 起動時スキャンを別スレッドで実行
     startup_thread = threading.Thread(target=startup_scan)
     startup_thread.daemon = True
     startup_thread.start()
 
+    # ポートを試す（5000, 5001, 5002）
+    host = '127.0.0.1'
+    ports_to_try = [5000, 5001, 5002]
+    port_found = None
+
+    for port in ports_to_try:
+        # ポートが使用可能かチェック
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex((host, port))
+        sock.close()
+
+        if result != 0:  # ポートが空いている
+            port_found = port
+            print(f"✓ ポート {port} が利用可能です")
+            print(f"✓ ブラウザで http://{host}:{port} にアクセスしてください")
+            print("="*60)
+            break
+        else:
+            print(f"⚠ ポート {port} は既に使用中です...")
+
+    if port_found is None:
+        print("\n" + "!"*60)
+        print("✗ エラー: 利用可能なポートが見つかりませんでした")
+        print("!"*60)
+        print("ポート 5000, 5001, 5002 が全て使用中です。")
+        print("いずれかのポートを解放してから再度お試しください。")
+        print("\nヒント:")
+        print("- macOSの場合: 'AirPlay Receiver'を無効化")
+        print("  (システム設定 → 一般 → AirDropとHandoff)")
+        print("- 使用中のプロセスを確認:")
+        print("  lsof -i :5000")
+        print("!"*60 + "\n")
+        exit(1)
+
     # Flaskアプリケーションを起動
     # host='0.0.0.0' でローカルネットワークからアクセス可能
     # 本番環境ではセキュリティに注意
-    app.run(host='127.0.0.1', port=5000, debug=True, use_reloader=False)
+    app.run(host=host, port=port_found, debug=True, use_reloader=False)
