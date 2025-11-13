@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalNetScan - ローカルネットワークスキャナー</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>LocalNetScan</h1>
+            <p class="subtitle">ローカルネットワークスキャナー</p>
+        </header>
+
+        <div class="controls">
+            <button id="rescanBtn" class="btn btn-primary">
+                <span class="btn-icon">🔄</span> 再スキャン
+            </button>
+            <div class="status-info">
+                <span id="lastScanTime">最終スキャン: --</span>
+                <span id="hostCount">検出ホスト数: 0</span>
+            </div>
+        </div>
+
+        <div id="scanStatus" class="scan-status hidden">
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div id="progressBar" class="progress-fill"></div>
+                </div>
+                <div class="progress-text">
+                    <span id="progressText">スキャン中...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="hosts-container">
+            <table id="hostsTable" class="hosts-table">
+                <thead>
+                    <tr>
+                        <th>IPアドレス</th>
+                        <th>ホスト名</th>
+                        <th>サブネット</th>
+                        <th>ベンダー</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="hostsTableBody">
+                    <tr class="no-data">
+                        <td colspan="5">スキャンを実行してください</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ポートスキャン結果モーダル -->
+    <div id="portScanModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>ポートスキャン結果</h2>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="portScanLoading" class="loading hidden">
+                    <div class="spinner"></div>
+                    <p>ポートスキャン実行中...</p>
+                </div>
+                <div id="portScanContent">
+                    <h3 id="modalHostIP"></h3>
+                    <div id="modalHostOS" class="host-os"></div>
+                    <table class="ports-table">
+                        <thead>
+                            <tr>
+                                <th>ポート</th>
+                                <th>プロトコル</th>
+                                <th>状態</th>
+                                <th>サービス</th>
+                                <th>バージョン</th>
+                            </tr>
+                        </thead>
+                        <tbody id="portsTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

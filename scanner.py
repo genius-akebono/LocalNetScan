@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""
+ネットワークスキャン機能を提供するモジュール
+"""
+
+import nmap
+import socket
+import subprocess
+import re
+import platform
+from typing import List, Dict, Optional
+
+
+class NetworkScanner:
+    """ネットワークスキャンを実行するクラス"""
+
+    def __init__(self):
+        """スキャナーの初期化"""
+        self.nm = nmap.PortScanner()
+        self.scan_results = {}
+
+    def get_local_ip(self) -> str:
+        """
+        ローカルIPアドレスを取得
+
+        Returns:
+            str: ローカルIPアドレス
+        """
+        try:
+            # ダミーのUDP接続を作成してローカルIPを取得
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            return local_ip
+        except Exception as e:
+            print(f"ローカルIP取得エラー: {e}")
+            return "127.0.0.1"
+
+    def detect_subnets(self) -> List[str]:
+        """
+        192.168.x.x のサブネットを検出
+
+        Returns:
+            List[str]: 検出されたサブネットのリスト（例: ["192.168.0.0/24", "192.168.1.0/24"]）
+        """
+        subnets = []
+        local_ip = self.get_local_ip()
+
+        # ローカルIPから所属サブネットを判定
+        ip_parts = local_ip.split('.')
+        if ip_parts[0] == '192' and ip_parts[1] == '168':
+            # 現在のサブネットを追加
+            subnet = f"192.168.{ip_parts[2]}.0/24"
+            subnets.append(subnet)
+
+        # 追加で他の一般的な192.168.x.0サブネットもスキャン対象にする場合
+        # （複数のネットワークインターフェースがある環境を想定）
+        try:
+            if platform.system() == 'Linux':
+                result = subprocess.run(['ip', 'addr'], capture_output=True, text=True, timeout=5)
+                output = result.stdout
+                # 192.168.x.x のアドレスを抽出
+                pattern = r'inet (192\.168\.\d+\.\d+)/\d+'
+                matches = re.findall(pattern, output)
+                for match in matches:
+                    ip_parts = match.split('.')
+                    subnet = f"192.168.{ip_parts[2]}.0/24"
+                    if subnet not in subnets:
+                        subnets.append(subnet)
+            elif platform.system() == 'Darwin':  # macOS
+                result = subprocess.run(['ifconfig'], capture_output=True, text=True, timeout=5)
+                output = result.stdout
+                pattern = r'inet (192\.168\.\d+\.\d+)'
+                matches = re.findall(pattern, output)
+                for match in matches:
+                    ip_parts = match.split('.')
+                    subnet = f"192.168.{ip_parts[2]}.0/24"
+                    if subnet not in subnets:
+                        subnets.append(subnet)
+        except Exception as e:
+            print(f"サブネット検出エラー: {e}")
+
+        return subnets if subnets else ["192.168.0.0/24"]
+
+    def ping_scan(self, subnet: str) -> Dict[str, Dict]:
+        """
+        指定されたサブネットに対してPingスキャン（nmap -sn）を実行
+
+        Args:
+            subnet: スキャン対象のサブネット（例: "192.168.0.0/24"）
+
+        Returns:
+            Dict: スキャン結果（キー: IPアドレス、値: ホスト情報）
+        """
+        results = {}
+        try:
+            print(f"Pingスキャン開始: {subnet}")
+            self.nm.scan(hosts=subnet, arguments='-sn')
+
+            for host in self.nm.all_hosts():
+                if self.nm[host].state() == 'up':
+                    hostname = self.nm[host].hostname() if self.nm[host].hostname() else 'Unknown'
+                    vendor = ''
+                    if 'mac' in self.nm[host]['addresses']:
+                        mac = self.nm[host]['addresses']['mac']
+                        vendor = self.nm[host]['vendor'].get(mac, '') if 'vendor' in self.nm[host] else ''
+
+                    results[host] = {
+                        'hostname': hostname,
+                        'state': 'up',
+                        'vendor': vendor,
+                        'subnet': subnet
+                    }
+
+            print(f"Pingスキャン完了: {len(results)}台のホストを検出")
+        except Exception as e:
+            print(f"Pingスキャンエラー: {e}")
+
+        return results
+
+    def scan_all_subnets(self) -> Dict[str, Dict]:
+        """
+        すべての検出されたサブネットをスキャン
+
+        Returns:
+            Dict: 全スキャン結果
+        """
+        all_results = {}
+        subnets = self.detect_subnets()
+
+        for subnet in subnets:
+            results = self.ping_scan(subnet)
+            all_results.update(results)
+
+        self.scan_results = all_results
+        return all_results
+
+    def port_scan(self, host: str, arguments: str = '-sS -sV') -> Dict:
+        """
+        指定されたホストに対して詳細ポートスキャンを実行
+
+        Args:
+            host: スキャン対象のIPアドレス
+            arguments: nmapの引数（デフォルト: '-sS -sV'）
+
+        Returns:
+            Dict: ポートスキャン結果
+        """
+        result = {
+            'host': host,
+            'ports': [],
+            'os': '',
+            'scan_time': ''
+        }
+
+        try:
+            print(f"ポートスキャン開始: {host}")
+            # -sS はroot権限が必要なため、権限がない場合は -sT を使用
+            try:
+                self.nm.scan(hosts=host, arguments=arguments)
+            except Exception as e:
+                # SYNスキャンが失敗した場合はTCPコネクトスキャンにフォールバック
+                if '-sS' in arguments:
+                    print(f"SYNスキャン失敗、TCPコネクトスキャンに切り替え: {e}")
+                    arguments = arguments.replace('-sS', '-sT')
+                    self.nm.scan(hosts=host, arguments=arguments)
+                else:
+                    raise
+
+            if host in self.nm.all_hosts():
+                # ポート情報を取得
+                for proto in self.nm[host].all_protocols():
+                    ports = self.nm[host][proto].keys()
+                    for port in ports:
+                        port_info = self.nm[host][proto][port]
+                        result['ports'].append({
+                            'port': port,
+                            'protocol': proto,
+                            'state': port_info['state'],
+                            'service': port_info.get('name', ''),
+                            'version': port_info.get('version', ''),
+                            'product': port_info.get('product', '')
+                        })
+
+                # OS情報（あれば）
+                if 'osmatch' in self.nm[host]:
+                    if len(self.nm[host]['osmatch']) > 0:
+                        result['os'] = self.nm[host]['osmatch'][0]['name']
+
+            print(f"ポートスキャン完了: {host} - {len(result['ports'])}ポート検出")
+        except Exception as e:
+            print(f"ポートスキャンエラー ({host}): {e}")
+            result['error'] = str(e)
+
+        return result
+
+    def get_scan_results(self) -> Dict[str, Dict]:
+        """
+        最後のスキャン結果を取得
+
+        Returns:
+            Dict: スキャン結果
+        """
+        return self.scan_results
