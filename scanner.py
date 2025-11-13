@@ -170,6 +170,38 @@ class NetworkScanner:
 
         return results
 
+    def scan_ip_range(self, target_range: str) -> Dict[str, Dict]:
+        """
+        指定されたIP範囲をスキャン
+
+        Args:
+            target_range: スキャン対象
+                - サブネット形式: "192.168.0.0/24"
+                - IP範囲形式: "192.168.0.1-50"
+
+        Returns:
+            Dict: スキャン結果
+        """
+        if not self.nmap_available:
+            print(f"エラー: nmapが利用できません - {self.nmap_error}")
+            return {}
+
+        # IP範囲形式を変換（192.168.0.1-50 → 192.168.0.1-192.168.0.50）
+        if '-' in target_range and '/' not in target_range:
+            parts = target_range.split('-')
+            if len(parts) == 2:
+                base_ip = parts[0]
+                end_num = parts[1]
+                # IPアドレスのベース部分を取得（例: 192.168.0）
+                ip_parts = base_ip.split('.')
+                if len(ip_parts) == 4:
+                    base = '.'.join(ip_parts[:3])
+                    start_num = ip_parts[3]
+                    # nmap形式に変換
+                    target_range = f"{base}.{start_num}-{end_num}"
+
+        return self.ping_scan(target_range)
+
     def scan_all_subnets(self) -> Dict[str, Dict]:
         """
         すべての検出されたサブネットをスキャン
@@ -187,13 +219,14 @@ class NetworkScanner:
         self.scan_results = all_results
         return all_results
 
-    def port_scan(self, host: str, arguments: str = '-sS -sV') -> Dict:
+    def port_scan(self, host: str, arguments: str = '-sS -sV', priority_only: bool = False) -> Dict:
         """
         指定されたホストに対して詳細ポートスキャンを実行
 
         Args:
             host: スキャン対象のIPアドレス
             arguments: nmapの引数（デフォルト: '-sS -sV'）
+            priority_only: Trueの場合、優先ポートのみスキャン
 
         Returns:
             Dict: ポートスキャン結果
@@ -202,7 +235,8 @@ class NetworkScanner:
             'host': host,
             'ports': [],
             'os': '',
-            'scan_time': ''
+            'scan_time': '',
+            'scan_stage': 'priority' if priority_only else 'full'
         }
 
         if not self.nmap_available:
@@ -210,25 +244,35 @@ class NetworkScanner:
             print(f"エラー: {result['error']}")
             return result
 
+        # 優先ポートの定義
+        priority_ports = [80, 8080, 5000, 5001, 5050, 3000, 30001]
+
         try:
             import time
             start_time = time.time()
 
             print(f"\n{'='*60}")
             print(f"ポートスキャン開始: {host}")
-            print(f"スキャンタイプ: {arguments}")
+            if priority_only:
+                print(f"スキャンタイプ: 優先ポート ({','.join(map(str, priority_ports))})")
+                # 優先ポートのみスキャン
+                ports_str = ','.join(map(str, priority_ports))
+                scan_args = f"-p {ports_str} {arguments}"
+            else:
+                print(f"スキャンタイプ: {arguments}")
+                scan_args = arguments
             print(f"{'='*60}")
             print("スキャン中... (ポートとサービスを検出しています)")
 
             # -sS はroot権限が必要なため、権限がない場合は -sT を使用
             try:
-                self.nm.scan(hosts=host, arguments=arguments)
+                self.nm.scan(hosts=host, arguments=scan_args)
             except Exception as e:
                 # SYNスキャンが失敗した場合はTCPコネクトスキャンにフォールバック
-                if '-sS' in arguments:
+                if '-sS' in scan_args:
                     print(f"⚠ SYNスキャン失敗、TCPコネクトスキャンに切り替え")
-                    arguments = arguments.replace('-sS', '-sT')
-                    self.nm.scan(hosts=host, arguments=arguments)
+                    scan_args = scan_args.replace('-sS', '-sT')
+                    self.nm.scan(hosts=host, arguments=scan_args)
                 else:
                     raise
 
@@ -263,7 +307,8 @@ class NetworkScanner:
 
             elapsed_time = time.time() - start_time
             print(f"\n{'='*60}")
-            print(f"ポートスキャン完了: {len(result['ports'])}個のポートを検出")
+            scan_type_str = "優先" if priority_only else "全"
+            print(f"{scan_type_str}ポートスキャン完了: {len(result['ports'])}個のポートを検出")
             print(f"所要時間: {elapsed_time:.1f}秒")
             print(f"{'='*60}\n")
 

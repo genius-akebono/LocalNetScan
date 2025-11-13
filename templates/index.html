@@ -14,12 +14,25 @@
         </header>
 
         <div class="controls">
-            <button id="rescanBtn" class="btn btn-primary">
-                <span class="btn-icon">🔄</span> 再スキャン
-            </button>
+            <div class="scan-input-group">
+                <input type="text" id="targetRange" class="input-field"
+                       placeholder="例: 192.168.0.1-50 または 192.168.0.0/24" />
+                <button id="rescanBtn" class="btn btn-primary">
+                    <span class="btn-icon">🔄</span> スキャン
+                </button>
+            </div>
             <div class="status-info">
                 <span id="lastScanTime">最終スキャン: --</span>
                 <span id="hostCount">検出ホスト数: 0</span>
+            </div>
+        </div>
+
+        <div class="scan-examples">
+            <p class="example-label">スキャン範囲の指定例:</p>
+            <div class="examples">
+                <span class="example-item">192.168.0.1-50</span>
+                <span class="example-item">192.168.0.0/24</span>
+                <span class="example-item">192.168.1.100-200</span>
             </div>
         </div>
 
