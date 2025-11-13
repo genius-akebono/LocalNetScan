@@ -68,6 +68,13 @@ async function checkScanStatus() {
         const progressText = document.getElementById('progressText');
         const rescanBtn = document.getElementById('rescanBtn');
 
+        // nmapが利用できない場合は警告を表示
+        if (status.nmap_available === false) {
+            showNmapWarning(status.nmap_error);
+            rescanBtn.disabled = true;
+            return;
+        }
+
         if (status.is_scanning) {
             scanStatus.classList.remove('hidden');
             progressBar.style.width = status.scan_progress + '%';
@@ -94,6 +101,37 @@ async function checkScanStatus() {
     } catch (error) {
         console.error('ステータス取得エラー:', error);
     }
+}
+
+// nmapの警告を表示
+function showNmapWarning(error) {
+    const tbody = document.getElementById('hostsTableBody');
+    tbody.innerHTML = `
+        <tr class="no-data">
+            <td colspan="5" style="padding: 40px; text-align: left;">
+                <div style="background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px; padding: 20px;">
+                    <h3 style="color: #856404; margin-bottom: 15px;">⚠️ nmapがインストールされていません</h3>
+                    <p style="color: #856404; margin-bottom: 10px;">
+                        LocalNetScanを使用するには、システムにnmapをインストールする必要があります。
+                    </p>
+                    <div style="background: white; padding: 15px; border-radius: 4px; margin-top: 15px;">
+                        <h4 style="color: #333; margin-bottom: 10px;">インストール方法:</h4>
+                        <p style="color: #333; margin-bottom: 5px;"><strong>macOS:</strong></p>
+                        <code style="background: #f5f5f5; padding: 5px 10px; border-radius: 3px; display: block; margin-bottom: 10px;">brew install nmap</code>
+
+                        <p style="color: #333; margin-bottom: 5px;"><strong>Ubuntu/Debian:</strong></p>
+                        <code style="background: #f5f5f5; padding: 5px 10px; border-radius: 3px; display: block; margin-bottom: 10px;">sudo apt-get update && sudo apt-get install nmap</code>
+
+                        <p style="color: #333; margin-bottom: 5px;"><strong>Windows:</strong></p>
+                        <p style="color: #666;">https://nmap.org/download.html からダウンロード</p>
+                    </div>
+                    <p style="color: #856404; margin-top: 15px; font-size: 0.9em;">
+                        インストール後、アプリケーションを再起動してください。
+                    </p>
+                </div>
+            </td>
+        </tr>
+    `;
 }
 
 // スキャン結果を読み込み

@@ -16,8 +16,36 @@ class NetworkScanner:
 
     def __init__(self):
         """スキャナーの初期化"""
-        self.nm = nmap.PortScanner()
         self.scan_results = {}
+        self.nmap_available = False
+        self.nmap_error = None
+
+        try:
+            self.nm = nmap.PortScanner()
+            self.nmap_available = True
+        except Exception as e:
+            self.nmap_error = str(e)
+            print("=" * 80)
+            print("エラー: nmapがシステムにインストールされていません")
+            print("=" * 80)
+            print("\nmacOSの場合、以下のコマンドでインストールしてください:")
+            print("  brew install nmap")
+            print("\nUbuntu/Debianの場合:")
+            print("  sudo apt-get update")
+            print("  sudo apt-get install nmap")
+            print("\nWindowsの場合:")
+            print("  https://nmap.org/download.html からダウンロードしてインストール")
+            print("=" * 80)
+            self.nm = None
+
+    def check_nmap_available(self) -> bool:
+        """
+        nmapが利用可能かチェック
+
+        Returns:
+            bool: nmapが利用可能な場合True
+        """
+        return self.nmap_available
 
     def get_local_ip(self) -> str:
         """
@@ -94,6 +122,11 @@ class NetworkScanner:
             Dict: スキャン結果（キー: IPアドレス、値: ホスト情報）
         """
         results = {}
+
+        if not self.nmap_available:
+            print(f"エラー: nmapが利用できません - {self.nmap_error}")
+            return results
+
         try:
             print(f"Pingスキャン開始: {subnet}")
             self.nm.scan(hosts=subnet, arguments='-sn')
@@ -153,6 +186,11 @@ class NetworkScanner:
             'os': '',
             'scan_time': ''
         }
+
+        if not self.nmap_available:
+            result['error'] = f"nmapが利用できません: {self.nmap_error}"
+            print(f"エラー: {result['error']}")
+            return result
 
         try:
             print(f"ポートスキャン開始: {host}")

@@ -75,6 +75,14 @@ def start_scan():
     """
     global scan_status
 
+    # nmapの利用可否をチェック
+    if not scanner.check_nmap_available():
+        return jsonify({
+            'status': 'error',
+            'message': 'nmapがインストールされていません。インストール後に再度お試しください。',
+            'nmap_error': scanner.nmap_error
+        }), 503
+
     if scan_status['is_scanning']:
         return jsonify({
             'status': 'error',
@@ -100,7 +108,11 @@ def get_scan_status():
     Returns:
         JSON: スキャンステータス
     """
-    return jsonify(scan_status)
+    status = scan_status.copy()
+    status['nmap_available'] = scanner.check_nmap_available()
+    if not scanner.check_nmap_available():
+        status['nmap_error'] = scanner.nmap_error
+    return jsonify(status)
 
 
 @app.route('/api/results', methods=['GET'])
@@ -223,8 +235,14 @@ def limit_remote_addr():
 
 def startup_scan():
     """起動時に自動スキャンを実行"""
-    print("起動時スキャンを開始します...")
     time.sleep(2)  # アプリケーション起動を待つ
+
+    if not scanner.check_nmap_available():
+        print("\n警告: nmapが利用できないため、起動時スキャンをスキップします")
+        print("nmapをインストール後、Webインターフェースから手動でスキャンを実行してください\n")
+        return
+
+    print("起動時スキャンを開始します...")
     background_scan()
 
 
