@@ -9,6 +9,20 @@ document.addEventListener('DOMContentLoaded', function() {
     // イベントリスナーの設定
     document.getElementById('rescanBtn').addEventListener('click', startScan);
 
+    // サンプルクリックで入力フィールドに設定
+    document.querySelectorAll('.example-item').forEach(item => {
+        item.addEventListener('click', function() {
+            document.getElementById('targetRange').value = this.textContent;
+        });
+    });
+
+    // Enterキーでスキャン開始
+    document.getElementById('targetRange').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            startScan();
+        }
+    });
+
     // 初回データ取得
     loadResults();
     checkScanStatus();
@@ -17,20 +31,32 @@ document.addEventListener('DOMContentLoaded', function() {
 // スキャンを開始
 async function startScan() {
     const btn = document.getElementById('rescanBtn');
+    const targetRangeInput = document.getElementById('targetRange');
+    const targetRange = targetRangeInput.value.trim();
+
     btn.disabled = true;
 
     try {
+        const requestBody = {};
+        if (targetRange) {
+            requestBody.target_range = targetRange;
+        }
+
         const response = await fetch('/api/scan', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
-            }
+            },
+            body: JSON.stringify(requestBody)
         });
 
         const data = await response.json();
 
         if (data.status === 'success') {
-            showNotification('スキャンを開始しました', 'success');
+            const message = targetRange
+                ? `スキャンを開始しました: ${targetRange}`
+                : 'スキャンを開始しました（自動検出）';
+            showNotification(message, 'success');
             monitorScanProgress();
         } else {
             showNotification(data.message, 'error');

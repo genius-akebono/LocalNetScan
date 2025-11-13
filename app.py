@@ -24,43 +24,52 @@ scan_results = {}
 port_scan_results = {}
 
 
-def background_scan():
-    """バックグラウンドでスキャンを実行"""
+def background_scan(target_range=None):
+    """バックグラウンドでスキャンを実行
+
+    Args:
+        target_range: スキャン対象（例: "192.168.0.0/24" または "192.168.0.1-50"）
+    """
     global scan_status, scan_results
 
     scan_status['is_scanning'] = True
     scan_status['scan_progress'] = 0
-    scan_status['current_subnet'] = '検出中...'
+    scan_status['current_subnet'] = 'スキャン準備中...'
 
     try:
         print("\n" + "="*60)
         print("ネットワークスキャン開始")
         print("="*60)
 
-        # サブネットを検出
-        print("\n[ステップ 1/2] サブネットを検出中...")
-        subnets = scanner.detect_subnets()
-        total_subnets = len(subnets)
-        print(f"✓ {total_subnets}個のサブネットを検出しました: {', '.join(subnets)}")
+        if target_range:
+            print(f"\nスキャン対象: {target_range}")
+            scan_status['current_subnet'] = target_range
+            results = scanner.scan_ip_range(target_range)
+        else:
+            # サブネットを検出（デフォルト動作）
+            print("\n[ステップ 1/2] サブネットを検出中...")
+            subnets = scanner.detect_subnets()
+            total_subnets = len(subnets)
+            print(f"✓ {total_subnets}個のサブネットを検出しました: {', '.join(subnets)}")
 
-        # 各サブネットをスキャン
-        print(f"\n[ステップ 2/2] 各サブネットをスキャン中...")
-        all_results = {}
-        for idx, subnet in enumerate(subnets):
-            scan_status['current_subnet'] = subnet
-            scan_status['scan_progress'] = int((idx / total_subnets) * 100)
+            # 各サブネットをスキャン
+            print(f"\n[ステップ 2/2] 各サブネットをスキャン中...")
+            results = {}
+            for idx, subnet in enumerate(subnets):
+                scan_status['current_subnet'] = subnet
+                scan_status['scan_progress'] = int((idx / total_subnets) * 100)
 
-            print(f"\n進捗: {idx+1}/{total_subnets} サブネット")
-            results = scanner.ping_scan(subnet)
-            all_results.update(results)
+                print(f"\n進捗: {idx+1}/{total_subnets} サブネット")
+                subnet_results = scanner.ping_scan(subnet)
+                results.update(subnet_results)
 
-        scan_results = all_results
+        scan_results = results
         scan_status['last_scan_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         scan_status['scan_progress'] = 100
 
         print("\n" + "="*60)
         print(f"全スキャン完了!")
-        print(f"検出されたホスト総数: {len(all_results)}台")
+        print(f"検出されたホスト総数: {len(results)}台")
         print("="*60 + "\n")
 
     except Exception as e:
@@ -83,6 +92,9 @@ def start_scan():
     """
     ネットワークスキャンを開始
 
+    Request Body:
+        target_range (optional): スキャン対象（例: "192.168.0.0/24" または "192.168.0.1-50"）
+
     Returns:
         JSON: スキャン開始ステータス
     """
@@ -102,14 +114,20 @@ def start_scan():
             'message': 'スキャンは既に実行中です'
         }), 400
 
+    # リクエストボディからIP範囲を取得
+    target_range = None
+    if request.json and 'target_range' in request.json:
+        target_range = request.json['target_range']
+
     # バックグラウンドでスキャンを開始
-    scan_thread = threading.Thread(target=background_scan)
+    scan_thread = threading.Thread(target=background_scan, args=(target_range,))
     scan_thread.daemon = True
     scan_thread.start()
 
     return jsonify({
         'status': 'success',
-        'message': 'スキャンを開始しました'
+        'message': 'スキャンを開始しました',
+        'target_range': target_range
     })
 
 
@@ -145,7 +163,7 @@ def get_results():
 @app.route('/api/port-scan/<host>', methods=['POST'])
 def start_port_scan(host):
     """
-    指定されたホストに対してポートスキャンを実行
+    指定されたホストに対してポートスキャンを実行（2段階スキャン）
 
     Args:
         host: スキャン対象のIPアドレス
@@ -165,20 +183,33 @@ def start_port_scan(host):
     # スキャンオプションを取得（デフォルト: -sT -sV）
     scan_args = request.json.get('arguments', '-sT -sV') if request.json else '-sT -sV'
 
-    try:
-        # ポートスキャンを実行
-        result = scanner.port_scan(host, scan_args)
-        port_scan_results[host] = result
+    def scan_in_background():
+        """バックグラウンドで2段階スキャンを実行"""
+        try:
+            # ステージ1: 優先ポートスキャン
+            print(f"\n[ステージ 1/2] {host} の優先ポートをスキャン中...")
+            priority_result = scanner.port_scan(host, scan_args, priority_only=True)
+            port_scan_results[host] = priority_result
 
-        return jsonify({
-            'status': 'success',
-            'data': result
-        })
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': f'ポートスキャンエラー: {str(e)}'
-        }), 500
+            # ステージ2: 全ポートスキャン
+            print(f"\n[ステージ 2/2] {host} の全ポートをスキャン中...")
+            full_result = scanner.port_scan(host, scan_args, priority_only=False)
+            port_scan_results[host] = full_result
+
+        except Exception as e:
+            print(f"\nポートスキャンエラー ({host}): {e}\n")
+            if host in port_scan_results:
+                port_scan_results[host]['error'] = str(e)
+
+    # バックグラウンドでスキャンを開始
+    scan_thread = threading.Thread(target=scan_in_background)
+    scan_thread.daemon = True
+    scan_thread.start()
+
+    return jsonify({
+        'status': 'success',
+        'message': '2段階ポートスキャンを開始しました（優先ポート→全ポート）'
+    })
 
 
 @app.route('/api/port-scan/<host>', methods=['GET'])
@@ -246,25 +277,6 @@ def limit_remote_addr():
     #     return jsonify({'error': 'アクセス拒否: ローカルホストのみアクセス可能です'}), 403
 
 
-def startup_scan():
-    """起動時に自動スキャンを実行"""
-    time.sleep(2)  # アプリケーション起動を待つ
-
-    if not scanner.check_nmap_available():
-        print("\n" + "!"*60)
-        print("⚠ 警告: nmapが利用できません")
-        print("!"*60)
-        print("nmapをインストール後、Webインターフェースから")
-        print("手動でスキャンを実行してください")
-        print("!"*60 + "\n")
-        return
-
-    print("\n" + "="*60)
-    print("起動時スキャンを開始します...")
-    print("="*60)
-    background_scan()
-
-
 if __name__ == '__main__':
     import socket
 
@@ -273,10 +285,14 @@ if __name__ == '__main__':
     print("="*60)
     print("✓ アプリケーションを起動しています...")
 
-    # 起動時スキャンを別スレッドで実行
-    startup_thread = threading.Thread(target=startup_scan)
-    startup_thread.daemon = True
-    startup_thread.start()
+    # nmapのチェック
+    if not scanner.check_nmap_available():
+        print("\n" + "!"*60)
+        print("⚠ 警告: nmapが利用できません")
+        print("!"*60)
+        print("nmapをインストール後、Webインターフェースから")
+        print("手動でスキャンを実行してください")
+        print("!"*60)
 
     # ポートを試す（5000, 5001, 5002）
     host = '127.0.0.1'
