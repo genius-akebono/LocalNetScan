@@ -128,9 +128,19 @@ class NetworkScanner:
             return results
 
         try:
+            import time
+            start_time = time.time()
+
+            print(f"\n{'='*60}")
             print(f"Pingスキャン開始: {subnet}")
+            print(f"{'='*60}")
+            print("スキャン中... (最大254台のホストをチェック)")
+            print("見つかったホスト:")
+
+            # スキャンを実行
             self.nm.scan(hosts=subnet, arguments='-sn')
 
+            # 結果を処理
             for host in self.nm.all_hosts():
                 if self.nm[host].state() == 'up':
                     hostname = self.nm[host].hostname() if self.nm[host].hostname() else 'Unknown'
@@ -146,9 +156,17 @@ class NetworkScanner:
                         'subnet': subnet
                     }
 
-            print(f"Pingスキャン完了: {len(results)}台のホストを検出")
+                    # 見つかったホストをリアルタイムで表示
+                    print(f"  ✓ {host:15s} - {hostname}")
+
+            elapsed_time = time.time() - start_time
+            print(f"\n{'='*60}")
+            print(f"スキャン完了: {len(results)}台のホストを検出")
+            print(f"所要時間: {elapsed_time:.1f}秒")
+            print(f"{'='*60}\n")
+
         except Exception as e:
-            print(f"Pingスキャンエラー: {e}")
+            print(f"\nPingスキャンエラー: {e}\n")
 
         return results
 
@@ -193,20 +211,29 @@ class NetworkScanner:
             return result
 
         try:
+            import time
+            start_time = time.time()
+
+            print(f"\n{'='*60}")
             print(f"ポートスキャン開始: {host}")
+            print(f"スキャンタイプ: {arguments}")
+            print(f"{'='*60}")
+            print("スキャン中... (ポートとサービスを検出しています)")
+
             # -sS はroot権限が必要なため、権限がない場合は -sT を使用
             try:
                 self.nm.scan(hosts=host, arguments=arguments)
             except Exception as e:
                 # SYNスキャンが失敗した場合はTCPコネクトスキャンにフォールバック
                 if '-sS' in arguments:
-                    print(f"SYNスキャン失敗、TCPコネクトスキャンに切り替え: {e}")
+                    print(f"⚠ SYNスキャン失敗、TCPコネクトスキャンに切り替え")
                     arguments = arguments.replace('-sS', '-sT')
                     self.nm.scan(hosts=host, arguments=arguments)
                 else:
                     raise
 
             if host in self.nm.all_hosts():
+                print("\n検出されたポート:")
                 # ポート情報を取得
                 for proto in self.nm[host].all_protocols():
                     ports = self.nm[host][proto].keys()
@@ -221,14 +248,27 @@ class NetworkScanner:
                             'product': port_info.get('product', '')
                         })
 
+                        # 見つかったポートを表示
+                        service = port_info.get('name', 'unknown')
+                        version = port_info.get('version', '')
+                        product = port_info.get('product', '')
+                        version_str = f"{product} {version}".strip() if product or version else ""
+                        print(f"  ✓ {port}/{proto:3s} - {service:15s} {version_str}")
+
                 # OS情報（あれば）
                 if 'osmatch' in self.nm[host]:
                     if len(self.nm[host]['osmatch']) > 0:
                         result['os'] = self.nm[host]['osmatch'][0]['name']
+                        print(f"\nOS検出: {result['os']}")
 
-            print(f"ポートスキャン完了: {host} - {len(result['ports'])}ポート検出")
+            elapsed_time = time.time() - start_time
+            print(f"\n{'='*60}")
+            print(f"ポートスキャン完了: {len(result['ports'])}個のポートを検出")
+            print(f"所要時間: {elapsed_time:.1f}秒")
+            print(f"{'='*60}\n")
+
         except Exception as e:
-            print(f"ポートスキャンエラー ({host}): {e}")
+            print(f"\nポートスキャンエラー ({host}): {e}\n")
             result['error'] = str(e)
 
         return result

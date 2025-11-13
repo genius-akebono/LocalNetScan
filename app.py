@@ -33,16 +33,24 @@ def background_scan():
     scan_status['current_subnet'] = '検出中...'
 
     try:
+        print("\n" + "="*60)
+        print("ネットワークスキャン開始")
+        print("="*60)
+
         # サブネットを検出
+        print("\n[ステップ 1/2] サブネットを検出中...")
         subnets = scanner.detect_subnets()
         total_subnets = len(subnets)
+        print(f"✓ {total_subnets}個のサブネットを検出しました: {', '.join(subnets)}")
 
         # 各サブネットをスキャン
+        print(f"\n[ステップ 2/2] 各サブネットをスキャン中...")
         all_results = {}
         for idx, subnet in enumerate(subnets):
             scan_status['current_subnet'] = subnet
             scan_status['scan_progress'] = int((idx / total_subnets) * 100)
 
+            print(f"\n進捗: {idx+1}/{total_subnets} サブネット")
             results = scanner.ping_scan(subnet)
             all_results.update(results)
 
@@ -50,8 +58,13 @@ def background_scan():
         scan_status['last_scan_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         scan_status['scan_progress'] = 100
 
+        print("\n" + "="*60)
+        print(f"全スキャン完了!")
+        print(f"検出されたホスト総数: {len(all_results)}台")
+        print("="*60 + "\n")
+
     except Exception as e:
-        print(f"スキャンエラー: {e}")
+        print(f"\n✗ スキャンエラー: {e}\n")
         scan_status['error'] = str(e)
 
     finally:
@@ -238,15 +251,28 @@ def startup_scan():
     time.sleep(2)  # アプリケーション起動を待つ
 
     if not scanner.check_nmap_available():
-        print("\n警告: nmapが利用できないため、起動時スキャンをスキップします")
-        print("nmapをインストール後、Webインターフェースから手動でスキャンを実行してください\n")
+        print("\n" + "!"*60)
+        print("⚠ 警告: nmapが利用できません")
+        print("!"*60)
+        print("nmapをインストール後、Webインターフェースから")
+        print("手動でスキャンを実行してください")
+        print("!"*60 + "\n")
         return
 
+    print("\n" + "="*60)
     print("起動時スキャンを開始します...")
+    print("="*60)
     background_scan()
 
 
 if __name__ == '__main__':
+    print("\n" + "="*60)
+    print("LocalNetScan - ローカルネットワークスキャナー")
+    print("="*60)
+    print("✓ アプリケーションを起動しています...")
+    print("✓ ブラウザで http://127.0.0.1:5000 にアクセスしてください")
+    print("="*60)
+
     # 起動時スキャンを別スレッドで実行
     startup_thread = threading.Thread(target=startup_scan)
     startup_thread.daemon = True
@@ -255,11 +281,4 @@ if __name__ == '__main__':
     # Flaskアプリケーションを起動
     # host='0.0.0.0' でローカルネットワークからアクセス可能
     # 本番環境ではセキュリティに注意
-    print("="*60)
-    print("LocalNetScan - ローカルネットワークスキャナー")
-    print("="*60)
-    print("アプリケーションを起動しています...")
-    print("ブラウザで http://127.0.0.1:5000 にアクセスしてください")
-    print("="*60)
-
     app.run(host='127.0.0.1', port=5000, debug=True, use_reloader=False)
