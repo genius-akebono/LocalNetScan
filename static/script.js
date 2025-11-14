@@ -405,12 +405,12 @@ function updateScanProgress(host, stage, command = '') {
     progressDiv.innerHTML = html;
 }
 
-// ポートスキャン結果をポーリング
+// ポートスキャン結果をポーリング（並列スキャン対応）
 async function pollPortScanResults(host) {
-    const maxAttempts = 300; // 最大5分間ポーリング（全ポートスキャンは時間がかかる）
+    const maxAttempts = 300; // 最大5分間ポーリング
     let attempts = 0;
-    let progressStage = 'started';
-    let lastStage = null;
+    let priorityDisplayed = false;
+    let fullDisplayed = false;
     let fullScanStartTime = null;
 
     const pollInterval = setInterval(async () => {
@@ -419,7 +419,7 @@ async function pollPortScanResults(host) {
         // 進捗ステージを更新（時間経過に基づく）
         if (attempts === 2) {
             updateScanProgress(host, 'detecting');
-        } else if (attempts === 10) {
+        } else if (attempts === 5) {
             updateScanProgress(host, 'analyzing');
         }
 
@@ -428,33 +428,32 @@ async function pollPortScanResults(host) {
             const data = await response.json();
 
             if (data.status === 'success' && data.data) {
-                // スキャンステージをチェック
                 const currentStage = data.data.scan_stage;
+                const currentPorts = data.data.ports || [];
 
-                // ステージが変わった場合のみ更新
-                if (currentStage !== lastStage) {
-                    lastStage = currentStage;
+                // 優先ポートスキャン結果が来た場合
+                if (currentStage === 'priority' && !priorityDisplayed && currentPorts.length > 0) {
+                    priorityDisplayed = true;
+                    updateScanProgress(host, 'analyzing');
+                    displayPortResults(host, data.data, 'priority');
+                    // 全ポートスキャン進捗表示エリアを作成
+                    fullScanStartTime = attempts;
+                    createFullScanProgressArea(host);
+                }
 
-                    // 優先ポートスキャンが完了した場合
-                    if (currentStage === 'priority') {
-                        updateScanProgress(host, 'analyzing');
-                        displayPortResults(host, data.data, 'priority');
-                        // 全ポートスキャン開始時刻を記録
-                        fullScanStartTime = attempts;
-                        // 全ポートスキャン進捗表示エリアを作成
-                        createFullScanProgressArea(host);
-                    }
-                    // 全ポートスキャンが完了した場合
-                    else if (currentStage === 'full') {
-                        updateScanProgress(host, 'complete');
-                        // 最終結果を表示
-                        displayPortResults(host, data.data, 'full');
-                        clearInterval(pollInterval);
-                    }
-                } else if (currentStage === 'priority' && fullScanStartTime) {
-                    // 全ポートスキャン実行中の進捗％を更新
+                // 全ポートスキャン結果が来た場合
+                if (currentStage === 'full' && !fullDisplayed) {
+                    fullDisplayed = true;
+                    updateScanProgress(host, 'complete');
+                    displayPortResults(host, data.data, 'full');
+                    clearInterval(pollInterval);
+                }
+
+                // 全ポートスキャン実行中の進捗％を更新
+                if (priorityDisplayed && !fullDisplayed && fullScanStartTime) {
                     const elapsedSinceFullStart = attempts - fullScanStartTime;
-                    updateFullScanProgress(host, elapsedSinceFullStart);
+                    // 並列スキャンは早いので、より積極的に進捗を表示
+                    updateFullScanProgress(host, elapsedSinceFullStart, true);
                 }
             } else if (attempts >= maxAttempts) {
                 // タイムアウト
@@ -482,22 +481,22 @@ function createFullScanProgressArea(host) {
     fullScanArea.style.cssText = 'margin-top: 20px; padding: 15px; background: #f7fafc; border-radius: 8px; border-left: 4px solid #667eea;';
     fullScanArea.innerHTML = `
         <h4 style="margin: 0 0 10px 0; color: #4a5568; display: flex; align-items: center;">
-            <span style="margin-right: 8px;">🔍</span>
-            全ポートスキャン実行中
+            <span style="margin-right: 8px;">🚀</span>
+            全ポート並列スキャン実行中（3スレッド）
         </h4>
         <div id="full-scan-progress-${host.replace(/\./g, '-')}" style="font-size: 0.9rem;">
             <div style="margin-bottom: 8px;">
                 <input type="checkbox" checked disabled> 優先ポートスキャン完了
             </div>
             <div style="margin-bottom: 8px;">
-                <input type="checkbox" disabled> 全ポート（1-65535）スキャン中... 0%
+                <input type="checkbox" disabled> 全ポート並列スキャン中（3スレッド）... 0%
             </div>
             <div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; margin-top: 10px; overflow: hidden;">
                 <div id="full-scan-progress-bar-${host.replace(/\./g, '-')}"
                      style="width: 0%; background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; transition: width 0.3s;"></div>
             </div>
             <div style="margin-top: 8px; color: #718096; font-size: 0.85rem;">
-                ⏱️ 全ポートスキャンは約1-2分かかります
+                🚀 高速並列スキャン（範囲分割）で約30-40秒で完了
             </div>
         </div>
     `;
@@ -506,40 +505,55 @@ function createFullScanProgressArea(host) {
 }
 
 // 全ポートスキャンの進捗％を更新
-function updateFullScanProgress(host, elapsedSeconds) {
+function updateFullScanProgress(host, elapsedSeconds, isParallel = false) {
     const progressText = document.getElementById(`full-scan-progress-${host.replace(/\./g, '-')}`);
     const progressBar = document.getElementById(`full-scan-progress-bar-${host.replace(/\./g, '-')}`);
 
     if (!progressText || !progressBar) return;
 
-    // 全ポートスキャンは通常80-120秒かかると仮定して進捗を推定
-    // 最初の30秒で50%、その後緩やかに増加
     let estimatedProgress = 0;
-    if (elapsedSeconds <= 30) {
-        estimatedProgress = Math.min(50, (elapsedSeconds / 30) * 50);
-    } else if (elapsedSeconds <= 60) {
-        estimatedProgress = 50 + ((elapsedSeconds - 30) / 30) * 30;
-    } else if (elapsedSeconds <= 90) {
-        estimatedProgress = 80 + ((elapsedSeconds - 60) / 30) * 15;
+
+    if (isParallel) {
+        // 並列スキャン（3スレッド）の場合、約30-40秒で完了すると推定
+        if (elapsedSeconds <= 10) {
+            estimatedProgress = Math.min(30, (elapsedSeconds / 10) * 30);
+        } else if (elapsedSeconds <= 20) {
+            estimatedProgress = 30 + ((elapsedSeconds - 10) / 10) * 40;
+        } else if (elapsedSeconds <= 30) {
+            estimatedProgress = 70 + ((elapsedSeconds - 20) / 10) * 25;
+        } else {
+            estimatedProgress = Math.min(98, 95 + ((elapsedSeconds - 30) / 10) * 3);
+        }
     } else {
-        estimatedProgress = Math.min(98, 95 + ((elapsedSeconds - 90) / 30) * 3);
+        // 通常スキャンは80-120秒かかる
+        if (elapsedSeconds <= 30) {
+            estimatedProgress = Math.min(50, (elapsedSeconds / 30) * 50);
+        } else if (elapsedSeconds <= 60) {
+            estimatedProgress = 50 + ((elapsedSeconds - 30) / 30) * 30);
+        } else if (elapsedSeconds <= 90) {
+            estimatedProgress = 80 + ((elapsedSeconds - 60) / 30) * 15);
+        } else {
+            estimatedProgress = Math.min(98, 95 + ((elapsedSeconds - 90) / 30) * 3);
+        }
     }
 
     estimatedProgress = Math.round(estimatedProgress);
+
+    const statusText = isParallel ? '全ポート並列スキャン中（3スレッド）' : '全ポート（1-65535）スキャン中';
 
     progressText.innerHTML = `
         <div style="margin-bottom: 8px;">
             <input type="checkbox" checked disabled> 優先ポートスキャン完了
         </div>
         <div style="margin-bottom: 8px;">
-            <input type="checkbox" disabled> 全ポート（1-65535）スキャン中... ${estimatedProgress}%
+            <input type="checkbox" disabled> ${statusText}... ${estimatedProgress}%
         </div>
         <div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; margin-top: 10px; overflow: hidden;">
             <div id="full-scan-progress-bar-${host.replace(/\./g, '-')}"
                  style="width: ${estimatedProgress}%; background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; transition: width 0.3s;"></div>
         </div>
         <div style="margin-top: 8px; color: #718096; font-size: 0.85rem;">
-            ⏱️ 経過時間: ${elapsedSeconds}秒
+            ${isParallel ? '🚀 高速並列スキャン実行中 | ' : '⏱️ '}経過時間: ${elapsedSeconds}秒
         </div>
     `;
 }

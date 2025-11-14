@@ -318,7 +318,7 @@ class NetworkScanner:
             if os.path.exists(output_file):
                 os.remove(output_file)
 
-    def port_scan(self, host: str, arguments: str = '-sS -sV', priority_only: bool = False) -> Dict:
+    def port_scan(self, host: str, arguments: str = '-sS -sV', priority_only: bool = False, is_range_scan: bool = False) -> Dict:
         """
         指定されたホストに対して詳細ポートスキャンを実行
 
@@ -356,10 +356,14 @@ class NetworkScanner:
                 print(f"スキャンタイプ: 優先ポート ({','.join(map(str, priority_ports))})")
                 # 優先ポートのみスキャン
                 ports_str = ','.join(map(str, priority_ports))
-                scan_args = f"-p {ports_str} {arguments}"
+                scan_args = f"-p {ports_str} -T4 {arguments}"
+            elif is_range_scan:
+                # 範囲スキャンの場合は引数にすでに-pが含まれている
+                print(f"スキャンタイプ: {arguments}")
+                scan_args = f"-T4 {arguments}"
             else:
                 print(f"スキャンタイプ: {arguments}")
-                scan_args = arguments
+                scan_args = f"-T4 {arguments}"
             print(f"{'='*60}")
 
             # root権限が必要なスキャンかチェック

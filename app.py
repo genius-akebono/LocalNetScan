@@ -183,28 +183,85 @@ def start_port_scan(host):
     # スキャンオプションを取得（デフォルト: -sT -sV）
     scan_args = request.json.get('arguments', '-sT -sV') if request.json else '-sT -sV'
 
-    def scan_in_background():
-        """バックグラウンドで2段階スキャンを実行"""
+    def scan_priority_ports():
+        """優先ポートスキャンを実行"""
         try:
-            # ステージ1: 優先ポートスキャン
-            print(f"\n[ステージ 1/2] {host} の優先ポートをスキャン中...")
+            print(f"\n[並列スキャン] {host} の優先ポートをスキャン中...")
             priority_result = scanner.port_scan(host, scan_args, priority_only=True)
             port_scan_results[host] = priority_result
+        except Exception as e:
+            print(f"\n優先ポートスキャンエラー ({host}): {e}\n")
 
-            # ステージ2: 全ポートスキャン
-            print(f"\n[ステージ 2/2] {host} の全ポートをスキャン中...")
-            full_result = scanner.port_scan(host, scan_args, priority_only=False)
-            port_scan_results[host] = full_result
+    def scan_full_ports():
+        """全ポートスキャンを並列実行（範囲分割）"""
+        try:
+            print(f"\n[並列スキャン] {host} の全ポートをスキャン中（範囲分割）...")
+
+            # 全ポートを3つの範囲に分割して並列スキャン
+            port_ranges = [
+                (1, 20000),
+                (20001, 40000),
+                (40001, 65535)
+            ]
+
+            results = []
+            threads = []
+
+            def scan_range(start, end):
+                """指定範囲をスキャン"""
+                try:
+                    range_args = f"-p {start}-{end} {scan_args}"
+                    result = scanner.port_scan(host, range_args, priority_only=False, is_range_scan=True)
+                    results.append(result)
+                except Exception as e:
+                    print(f"範囲 {start}-{end} のスキャンエラー: {e}")
+
+            # 各範囲を別スレッドでスキャン
+            for start, end in port_ranges:
+                thread = threading.Thread(target=scan_range, args=(start, end))
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+
+            # 全スレッドの完了を待つ
+            for thread in threads:
+                thread.join()
+
+            # 結果をマージ
+            merged_result = {
+                'host': host,
+                'ports': [],
+                'os': '',
+                'scan_time': '',
+                'scan_stage': 'full'
+            }
+
+            for result in results:
+                if 'ports' in result:
+                    merged_result['ports'].extend(result['ports'])
+                if result.get('os'):
+                    merged_result['os'] = result['os']
+
+            # ポートを番号順にソート
+            merged_result['ports'].sort(key=lambda x: x['port'])
+
+            port_scan_results[host] = merged_result
+            print(f"\n全ポートスキャン完了: {len(merged_result['ports'])}個のポートを検出")
 
         except Exception as e:
-            print(f"\nポートスキャンエラー ({host}): {e}\n")
+            print(f"\n全ポートスキャンエラー ({host}): {e}\n")
             if host in port_scan_results:
                 port_scan_results[host]['error'] = str(e)
 
-    # バックグラウンドでスキャンを開始
-    scan_thread = threading.Thread(target=scan_in_background)
-    scan_thread.daemon = True
-    scan_thread.start()
+    # 優先ポートと全ポートを並列実行
+    priority_thread = threading.Thread(target=scan_priority_ports)
+    full_thread = threading.Thread(target=scan_full_ports)
+
+    priority_thread.daemon = True
+    full_thread.daemon = True
+
+    priority_thread.start()
+    full_thread.start()
 
     return jsonify({
         'status': 'success',
