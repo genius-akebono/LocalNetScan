@@ -229,10 +229,11 @@ def get_port_scan_result(host):
             'data': port_scan_results[host]
         })
     else:
+        # スキャン結果がない場合、404ではなくスキャン待機中として返す
         return jsonify({
-            'status': 'error',
-            'message': 'ポートスキャン結果が見つかりません'
-        }), 404
+            'status': 'pending',
+            'message': 'スキャン実行中または未実行です'
+        })
 
 
 @app.route('/api/host/<host>', methods=['DELETE'])
