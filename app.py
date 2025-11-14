@@ -304,9 +304,10 @@ def set_sudo_password():
 def get_process_info(host):
     """
     指定されたホストのポートで動作しているプロセス情報を取得
+    注: リモートホストのプロセス情報は取得できません（ローカルマシンのみ）
 
     Args:
-        host: IPアドレス
+        host: IPアドレス（ローカルマシンかどうかのチェックに使用）
 
     Returns:
         JSON: プロセス情報 {port/protocol: {pid: xxx, name: xxx}}
@@ -316,6 +317,23 @@ def get_process_info(host):
 
     process_info = {}
 
+    # ローカルIPアドレスのリスト
+    local_ips = ['127.0.0.1', 'localhost', '::1']
+    try:
+        # 実際のローカルIPも追加
+        local_ips.append(scanner.get_local_ip())
+    except:
+        pass
+
+    # リモートホストの場合は空の結果を返す（エラーではない）
+    if host not in local_ips and not host.startswith('127.') and not host.startswith('::'):
+        # リモートホストのプロセス情報は取得できないため、空の結果を返す
+        return jsonify({
+            'status': 'success',
+            'data': {},
+            'note': 'リモートホストのプロセス情報は取得できません'
+        })
+
     try:
         # lsof または netstat を使用してポート情報を取得
         # Linuxの場合は ss または netstat を使用
@@ -323,7 +341,7 @@ def get_process_info(host):
             ['ss', '-tunlp'],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=10
         )
 
         if result.returncode != 0:
@@ -332,7 +350,7 @@ def get_process_info(host):
                 ['netstat', '-tunlp'],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=10
             )
 
         output = result.stdout
@@ -341,6 +359,9 @@ def get_process_info(host):
         for line in output.split('\n'):
             # ポート番号を抽出
             # 例: tcp   LISTEN 0      128    0.0.0.0:22    0.0.0.0:*    users:(("sshd",pid=1234,fd=3))
+            # より柔軟なパターンマッチング
+
+            # パターン1: users:(("name",pid=123,fd=3))
             match = re.search(r':(\d+)\s.*users:\(\("([^"]+)",pid=(\d+)', line)
             if match:
                 port = match.group(1)
@@ -355,6 +376,22 @@ def get_process_info(host):
                     'pid': int(pid),
                     'name': name
                 }
+                continue
+
+            # パターン2: lsof形式 (補完)
+            # 例: python3   12345  user   3u  IPv4  12345      0t0  TCP *:5000 (LISTEN)
+            match2 = re.search(r'^(\S+)\s+(\d+).*?[:\*](\d+)\s+\(LISTEN\)', line)
+            if match2:
+                name = match2.group(1)
+                pid = match2.group(2)
+                port = match2.group(3)
+
+                port_key = f"{port}/tcp"
+                if port_key not in process_info:
+                    process_info[port_key] = {
+                        'pid': int(pid),
+                        'name': name
+                    }
 
         return jsonify({
             'status': 'success',
@@ -362,21 +399,26 @@ def get_process_info(host):
         })
 
     except subprocess.TimeoutExpired:
+        # タイムアウトの場合も空の結果を返す（エラーにしない）
         return jsonify({
-            'status': 'error',
-            'message': 'プロセス情報の取得がタイムアウトしました'
-        }), 500
+            'status': 'success',
+            'data': {},
+            'warning': 'プロセス情報の取得がタイムアウトしました'
+        })
     except Exception as e:
+        # エラーの場合も空の結果を返す（500エラーにしない）
+        print(f"プロセス情報取得エラー: {e}")
         return jsonify({
-            'status': 'error',
-            'message': f'プロセス情報の取得に失敗しました: {str(e)}'
-        }), 500
+            'status': 'success',
+            'data': {},
+            'warning': f'プロセス情報を取得できませんでした'
+        })
 
 
 @app.route('/api/kill-process/<int:pid>', methods=['POST'])
 def kill_process(pid):
     """
-    指定されたプロセスを終了
+    指定されたプロセスを安全に終了
 
     Args:
         pid: プロセスID
@@ -386,11 +428,19 @@ def kill_process(pid):
     """
     import subprocess
     import signal
+    import os
+
+    # 安全性チェック: 重要なシステムプロセスを保護
+    protected_pids = [0, 1]  # init/systemd など
+    if pid in protected_pids or pid <= 0:
+        return jsonify({
+            'status': 'error',
+            'message': f'PID {pid} は保護されたプロセスです'
+        }), 403
 
     try:
         # PIDが存在するか確認
         try:
-            import os
             os.kill(pid, 0)  # シグナル0で存在確認
         except OSError:
             return jsonify({
@@ -398,32 +448,56 @@ def kill_process(pid):
                 'message': f'PID {pid} のプロセスが見つかりません'
             }), 404
 
+        # プロセス名を取得して確認用に表示
+        try:
+            proc_name_result = subprocess.run(
+                ['ps', '-p', str(pid), '-o', 'comm='],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            proc_name = proc_name_result.stdout.strip() if proc_name_result.returncode == 0 else 'unknown'
+        except:
+            proc_name = 'unknown'
+
         # プロセスを終了
         try:
             os.kill(pid, signal.SIGTERM)  # まずSIGTERMで穏やかに終了
             return jsonify({
                 'status': 'success',
-                'message': f'プロセス {pid} を終了しました'
+                'message': f'プロセス {pid} ({proc_name}) を終了しました'
             })
         except PermissionError:
             # 権限がない場合はsudoで試す
             if scanner.sudo_password:
-                result = subprocess.run(
-                    ['sudo', '-S', 'kill', str(pid)],
-                    input=f"{scanner.sudo_password}\n",
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    return jsonify({
-                        'status': 'success',
-                        'message': f'プロセス {pid} を終了しました（sudo使用）'
-                    })
-                else:
+                try:
+                    result = subprocess.run(
+                        ['sudo', '-S', 'kill', '-TERM', str(pid)],
+                        input=f"{scanner.sudo_password}\n",
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    if result.returncode == 0:
+                        return jsonify({
+                            'status': 'success',
+                            'message': f'プロセス {pid} ({proc_name}) を終了しました（sudo使用）'
+                        })
+                    else:
+                        # パスワードエラーのチェック
+                        if 'incorrect password' in result.stderr.lower() or 'sorry' in result.stderr.lower():
+                            return jsonify({
+                                'status': 'error',
+                                'message': 'sudoパスワードが正しくありません'
+                            }), 403
+                        return jsonify({
+                            'status': 'error',
+                            'message': f'プロセスの終了に失敗しました: {result.stderr}'
+                        }), 500
+                except subprocess.TimeoutExpired:
                     return jsonify({
                         'status': 'error',
-                        'message': f'プロセスの終了に失敗しました: {result.stderr}'
+                        'message': 'プロセスの終了がタイムアウトしました'
                     }), 500
             else:
                 return jsonify({
@@ -432,6 +506,7 @@ def kill_process(pid):
                 }), 403
 
     except Exception as e:
+        print(f"プロセス終了エラー (PID {pid}): {e}")
         return jsonify({
             'status': 'error',
             'message': f'プロセスの終了に失敗しました: {str(e)}'
