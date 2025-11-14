@@ -336,22 +336,39 @@ def get_process_info(host):
         })
 
     try:
-        # lsof または netstat を使用してポート情報を取得
-        # Linuxの場合は ss または netstat を使用
+        # lsof, ss, netstat を順に試す
         result = None
+        command_type = None
+
+        # 優先度1: lsof（最も詳細な情報）
         try:
             result = subprocess.run(
-                ['ss', '-tunlp'],
+                ['lsof', '-i', '-n', '-P'],
                 capture_output=True,
                 text=True,
                 timeout=10
             )
+            if result.returncode == 0:
+                command_type = 'lsof'
         except FileNotFoundError:
-            # ssが見つからない場合はnetstatを試す
             pass
 
+        # 優先度2: ss
         if result is None or result.returncode != 0:
-            # ssが使えない場合はnetstatを試す
+            try:
+                result = subprocess.run(
+                    ['ss', '-tunlp'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    command_type = 'ss'
+            except FileNotFoundError:
+                pass
+
+        # 優先度3: netstat
+        if result is None or result.returncode != 0:
             try:
                 result = subprocess.run(
                     ['netstat', '-tunlp'],
@@ -359,53 +376,81 @@ def get_process_info(host):
                     text=True,
                     timeout=10
                 )
+                if result.returncode == 0:
+                    command_type = 'netstat'
             except FileNotFoundError:
-                # netstatも見つからない場合は空の結果を返す
-                return jsonify({
-                    'status': 'success',
-                    'data': {},
-                    'warning': 'ssまたはnetstatコマンドが見つかりません'
-                })
+                pass
+
+        # いずれのコマンドも使えない場合
+        if result is None or result.returncode != 0:
+            return jsonify({
+                'status': 'success',
+                'data': {},
+                'warning': 'lsof, ss, netstatコマンドが見つかりません'
+            })
 
         output = result.stdout
 
-        # 各行をパース
+        # 各行をパース（コマンドタイプに応じて）
         for line in output.split('\n'):
-            # ポート番号を抽出
-            # 例: tcp   LISTEN 0      128    0.0.0.0:22    0.0.0.0:*    users:(("sshd",pid=1234,fd=3))
-            # より柔軟なパターンマッチング
-
-            # パターン1: users:(("name",pid=123,fd=3))
-            match = re.search(r':(\d+)\s.*users:\(\("([^"]+)",pid=(\d+)', line)
-            if match:
-                port = match.group(1)
-                name = match.group(2)
-                pid = match.group(3)
-
-                # プロトコルを判定
-                protocol = 'tcp' if 'tcp' in line.lower() else 'udp'
-                port_key = f"{port}/{protocol}"
-
-                process_info[port_key] = {
-                    'pid': int(pid),
-                    'name': name
-                }
+            if not line.strip():
                 continue
 
-            # パターン2: lsof形式 (補完)
+            # lsofの出力をパース
             # 例: python3   12345  user   3u  IPv4  12345      0t0  TCP *:5000 (LISTEN)
-            match2 = re.search(r'^(\S+)\s+(\d+).*?[:\*](\d+)\s+\(LISTEN\)', line)
-            if match2:
-                name = match2.group(1)
-                pid = match2.group(2)
-                port = match2.group(3)
+            # 例: python3   12345  user   3u  IPv4  12345      0t0  TCP 127.0.0.1:5000 (LISTEN)
+            if command_type == 'lsof':
+                match = re.search(r'^(\S+)\s+(\d+)\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(TCP|UDP)\s+[^:]*:(\d+)\s+\(LISTEN\)', line, re.IGNORECASE)
+                if match:
+                    name = match.group(1)
+                    pid = match.group(2)
+                    protocol = match.group(3).lower()
+                    port = match.group(4)
 
-                port_key = f"{port}/tcp"
-                if port_key not in process_info:
+                    port_key = f"{port}/{protocol}"
+                    if port_key not in process_info:
+                        process_info[port_key] = {
+                            'pid': int(pid),
+                            'name': name
+                        }
+                    continue
+
+            # ssの出力をパース
+            # 例: tcp   LISTEN 0      128    0.0.0.0:22    0.0.0.0:*    users:(("sshd",pid=1234,fd=3))
+            if command_type == 'ss':
+                match = re.search(r':(\d+)\s.*users:\(\("([^"]+)",pid=(\d+)', line)
+                if match:
+                    port = match.group(1)
+                    name = match.group(2)
+                    pid = match.group(3)
+
+                    # プロトコルを判定
+                    protocol = 'tcp' if 'tcp' in line.lower() else 'udp'
+                    port_key = f"{port}/{protocol}"
+
                     process_info[port_key] = {
                         'pid': int(pid),
                         'name': name
                     }
+                    continue
+
+            # netstatの出力をパース
+            # 例: tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      1234/sshd
+            if command_type == 'netstat':
+                match = re.search(r'(tcp|udp)\s+\d+\s+\d+\s+[^:]*:(\d+)\s+.*?LISTEN\s+(\d+)/(\S+)', line, re.IGNORECASE)
+                if match:
+                    protocol = match.group(1).lower()
+                    port = match.group(2)
+                    pid = match.group(3)
+                    name = match.group(4)
+
+                    port_key = f"{port}/{protocol}"
+                    if port_key not in process_info:
+                        process_info[port_key] = {
+                            'pid': int(pid),
+                            'name': name
+                        }
+                    continue
 
         return jsonify({
             'status': 'success',
