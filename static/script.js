@@ -529,9 +529,9 @@ function updateFullScanProgress(host, elapsedSeconds, isParallel = false) {
         if (elapsedSeconds <= 30) {
             estimatedProgress = Math.min(50, (elapsedSeconds / 30) * 50);
         } else if (elapsedSeconds <= 60) {
-            estimatedProgress = 50 + ((elapsedSeconds - 30) / 30) * 30);
+            estimatedProgress = 50 + ((elapsedSeconds - 30) / 30) * 30;
         } else if (elapsedSeconds <= 90) {
-            estimatedProgress = 80 + ((elapsedSeconds - 60) / 30) * 15);
+            estimatedProgress = 80 + ((elapsedSeconds - 60) / 30) * 15;
         } else {
             estimatedProgress = Math.min(98, 95 + ((elapsedSeconds - 90) / 30) * 3);
         }
@@ -708,16 +708,9 @@ async function killProcess(pid, host, port) {
 
         if (data.status === 'success') {
             showNotification(`プロセス ${pid} を終了しました`, 'success');
-            // 結果を再取得
-            setTimeout(() => {
-                fetch(`/api/port-scan/${host}`)
-                    .then(r => r.json())
-                    .then(d => {
-                        if (d.status === 'success') {
-                            displayPortResults(host, d.data);
-                        }
-                    });
-            }, 1000);
+
+            // 該当のポートアイテムを見つけてグレーアウト
+            greyOutKilledPort(host, port, pid);
         } else {
             showNotification('プロセスの終了に失敗しました: ' + data.message, 'error');
         }
@@ -725,6 +718,41 @@ async function killProcess(pid, host, port) {
         console.error('プロセス終了エラー:', error);
         showNotification('プロセスの終了に失敗しました', 'error');
     }
+}
+
+// KILLしたポートをグレーアウト表示
+function greyOutKilledPort(host, port, pid) {
+    // 全てのport-itemを検索して該当のポートを見つける
+    const portsContainers = document.querySelectorAll(`#ports-${host.replace(/\./g, '-')} .port-item`);
+
+    portsContainers.forEach(portItem => {
+        const portNumberElement = portItem.querySelector('.port-number');
+        if (portNumberElement && portNumberElement.textContent.startsWith(`${port}/`)) {
+            // グレーアウトスタイルを適用
+            portItem.style.opacity = '0.5';
+            portItem.style.background = '#f5f5f5';
+            portItem.style.borderLeft = '3px solid #cbd5e0';
+            portItem.style.paddingLeft = '12px';
+            portItem.style.transition = 'all 0.3s ease';
+
+            // KILLボタンを「終了済み」バッジに置き換え
+            const killButton = portItem.querySelector('.btn-kill');
+            if (killButton) {
+                killButton.outerHTML = `
+                    <span style="padding: 6px 14px; background: #a0aec0; color: white; border-radius: 4px; font-size: 0.85rem; font-weight: 600;">
+                        ✓ 終了済み
+                    </span>
+                `;
+            }
+
+            // プロセス情報の部分に取り消し線を追加
+            const processInfoDiv = portItem.querySelector('div[style*="background: #f7fafc"]');
+            if (processInfoDiv) {
+                processInfoDiv.style.textDecoration = 'line-through';
+                processInfoDiv.style.opacity = '0.6';
+            }
+        }
+    });
 }
 
 // モーダルを閉じる（互換性のため残す）
