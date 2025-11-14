@@ -2,6 +2,33 @@
 let scanInterval = null;
 let hostsData = {};
 
+// ローカルホストかどうかを判定
+function isLocalHost(host) {
+    // localhostまたは127.x.x.x
+    if (host === 'localhost' || host.startsWith('127.')) {
+        return true;
+    }
+    // プライベートIPアドレス範囲をチェック
+    const parts = host.split('.');
+    if (parts.length === 4) {
+        const first = parseInt(parts[0]);
+        const second = parseInt(parts[1]);
+        // 192.168.x.x
+        if (first === 192 && second === 168) {
+            return true;
+        }
+        // 10.x.x.x
+        if (first === 10) {
+            return true;
+        }
+        // 172.16.x.x ~ 172.31.x.x
+        if (first === 172 && second >= 16 && second <= 31) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ページ読み込み時の初期化
 document.addEventListener('DOMContentLoaded', function() {
     console.log('LocalNetScan initialized');
@@ -419,7 +446,7 @@ function createPortScanTabs(host) {
                         data-tab="full"
                         onclick="switchTab('${host}', 'full')"
                         style="flex: 1; padding: 12px 20px; background: #cbd5e0; color: #4a5568; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; font-size: 0.95rem; transition: all 0.3s;">
-                    🔍 全ポート (1-65535)<br><span style="font-size: 0.75rem; font-weight: 400; opacity: 0.8;">🚀 並列3スレッド</span>
+                    🔍 全ポート (1-65535)<br><span style="font-size: 0.75rem; font-weight: 400; opacity: 0.8;">🚀 並列5スレッド</span>
                 </button>
             </div>
 
@@ -441,7 +468,7 @@ function createPortScanTabs(host) {
                     <div style="background: #f7fafc; padding: 15px; border-radius: 8px;">
                         <h4 style="margin: 0 0 10px 0; color: #4a5568;">🔍 全ポートスキャン進捗</h4>
                         <div id="full-progress-${hostKey}" style="font-size: 0.9rem;">
-                            <div><input type="checkbox" disabled> 🚀 並列スキャン待機中（3スレッド）...</div>
+                            <div><input type="checkbox" disabled> 🚀 並列スキャン待機中（5スレッド）...</div>
                         </div>
                         <div id="full-scan-progress-bar-container-${hostKey}" style="display: none; margin-top: 15px;">
                             <div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden;">
@@ -449,7 +476,7 @@ function createPortScanTabs(host) {
                                      style="width: 0%; background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; transition: width 0.3s;"></div>
                             </div>
                             <div id="full-scan-progress-text-${hostKey}" style="margin-top: 8px; color: #718096; font-size: 0.85rem;">
-                                🚀 高速並列スキャン実行中（3スレッド）...
+                                🚀 高速並列スキャン実行中（5スレッド）...
                             </div>
                         </div>
                     </div>
@@ -489,6 +516,7 @@ function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
     const progressDiv = document.getElementById(`${tabName}-progress-${hostKey}`);
     if (!progressDiv) return;
 
+    const isLocal = isLocalHost(host);
     let html = '';
 
     if (stage === 'started') {
@@ -503,36 +531,56 @@ function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
             <div style="margin-bottom: 5px;"><input type="checkbox" disabled> ポート検出中...</div>
         `;
     } else if (stage === 'analyzing') {
-        html = `
-            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
-            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
-            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ポート検出完了</div>
-            <div style="margin-bottom: 5px;"><input type="checkbox" disabled> サービス情報取得中...</div>
-        `;
+        if (isLocal) {
+            html = `
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ポート検出完了</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> サービス情報取得中...</div>
+            `;
+        } else {
+            // リモートスキャンの場合はサービス情報取得をスキップ
+            html = `
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ポート検出完了</div>
+                <div style="margin-bottom: 5px; color: #718096;"><input type="checkbox" disabled> リモートホストのためサービス情報取得不可</div>
+            `;
+        }
     } else if (stage === 'complete') {
-        html = `
-            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
-            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
-            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ポート検出完了</div>
-            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> サービス情報取得完了</div>
-            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> 結果の解析完了</div>
-        `;
+        if (isLocal) {
+            html = `
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ポート検出完了</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> サービス情報取得完了</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> 結果の解析完了</div>
+            `;
+        } else {
+            // リモートスキャンの場合はサービス情報取得をスキップ
+            html = `
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ポート検出完了</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> 結果の解析完了</div>
+            `;
+        }
     } else if (stage === 'error') {
         html = `
             <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
             <div style="margin-bottom: 5px; color: #f56565;"><input type="checkbox" disabled> ❌ スキャン失敗</div>
         `;
     } else if (stage === 'scanning') {
-        // 全ポートスキャン実行中（進捗％付き）
+        // 全ポートスキャン実行中（進捗％付き）- 5スレッドに合わせて調整
         let estimatedProgress = 0;
-        if (elapsedSeconds <= 10) {
-            estimatedProgress = Math.min(30, (elapsedSeconds / 10) * 30);
-        } else if (elapsedSeconds <= 20) {
-            estimatedProgress = 30 + ((elapsedSeconds - 10) / 10) * 40;
-        } else if (elapsedSeconds <= 30) {
-            estimatedProgress = 70 + ((elapsedSeconds - 20) / 10) * 25;
+        if (elapsedSeconds <= 8) {
+            estimatedProgress = Math.min(30, (elapsedSeconds / 8) * 30);
+        } else if (elapsedSeconds <= 16) {
+            estimatedProgress = 30 + ((elapsedSeconds - 8) / 8) * 40;
+        } else if (elapsedSeconds <= 24) {
+            estimatedProgress = 70 + ((elapsedSeconds - 16) / 8) * 25;
         } else {
-            estimatedProgress = Math.min(98, 95 + ((elapsedSeconds - 30) / 10) * 3);
+            estimatedProgress = Math.min(99, 95 + ((elapsedSeconds - 24) / 8) * 4);
         }
         estimatedProgress = Math.round(estimatedProgress);
 
@@ -552,7 +600,7 @@ function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
                 progressBar.style.width = `${estimatedProgress}%`;
             }
             if (progressText) {
-                progressText.textContent = `🚀 高速並列スキャン実行中（3スレッド）| 経過時間: ${elapsedSeconds}秒 | ${estimatedProgress}%`;
+                progressText.textContent = `🚀 高速並列スキャン実行中（5スレッド）| 経過時間: ${elapsedSeconds}秒 | ${estimatedProgress}%`;
             }
         }
     }
