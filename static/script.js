@@ -177,149 +177,252 @@ async function loadResults() {
     }
 }
 
-// ホスト一覧を表示
+// ホスト一覧を表示（カード形式）
 function displayHosts(hosts) {
-    const tbody = document.getElementById('hostsTableBody');
-    tbody.innerHTML = '';
+    const container = document.getElementById('hostsContainer');
+    container.innerHTML = '';
 
     if (Object.keys(hosts).length === 0) {
-        tbody.innerHTML = '<tr class="no-data"><td colspan="5">ホストが見つかりませんでした</td></tr>';
+        container.innerHTML = '<div style="text-align: center; padding: 40px; color: #999;">ホストが見つかりませんでした</div>';
         return;
     }
 
     for (const [ip, info] of Object.entries(hosts)) {
-        const row = document.createElement('tr');
-
-        row.innerHTML = `
-            <td><strong>${ip}</strong></td>
-            <td>${info.hostname || 'Unknown'}</td>
-            <td>${info.subnet || '-'}</td>
-            <td>${info.vendor || '-'}</td>
-            <td class="actions">
-                <button class="btn btn-secondary" onclick="startPortScan('${ip}')">
-                    ポートスキャン
-                </button>
-                <button class="btn btn-danger" onclick="removeHost('${ip}')">
-                    削除
-                </button>
-            </td>
-        `;
-
-        tbody.appendChild(row);
+        const card = createHostCard(ip, info);
+        container.appendChild(card);
     }
 }
 
-// ポートスキャンを開始
-async function startPortScan(host) {
-    // モーダルを表示
-    const modal = document.getElementById('portScanModal');
-    const loading = document.getElementById('portScanLoading');
-    const content = document.getElementById('portScanContent');
+// ホストカードを作成
+function createHostCard(ip, info) {
+    const card = document.createElement('div');
+    card.className = 'host-card';
+    card.id = `host-${ip.replace(/\./g, '-')}`;
 
+    card.innerHTML = `
+        <div class="card-header" onclick="toggleCard('${ip}')">
+            <div class="card-title">
+                <h3>${ip}</h3>
+                <span class="status-badge up">Online</span>
+            </div>
+            <span class="card-toggle" id="toggle-${ip.replace(/\./g, '-')}">▼</span>
+        </div>
+        <div class="card-body" id="body-${ip.replace(/\./g, '-')}">
+            <!-- セクション1: PING/物理アクセス -->
+            <div class="section">
+                <div class="section-header">
+                    <div class="section-title">
+                        <span class="section-icon">📡</span>
+                        物理アクセス
+                    </div>
+                </div>
+                <div class="info-grid">
+                    <span class="info-label">状態:</span>
+                    <span class="info-value">✓ PING応答あり</span>
+                    <span class="info-label">サブネット:</span>
+                    <span class="info-value">${info.subnet || '-'}</span>
+                </div>
+            </div>
+
+            <!-- セクション2: マシン情報 -->
+            <div class="section">
+                <div class="section-header">
+                    <div class="section-title">
+                        <span class="section-icon">💻</span>
+                        マシン情報
+                    </div>
+                </div>
+                <div class="info-grid">
+                    <span class="info-label">ホスト名:</span>
+                    <span class="info-value">${info.hostname || 'Unknown'}</span>
+                    <span class="info-label">ベンダー:</span>
+                    <span class="info-value">${info.vendor || '-'}</span>
+                </div>
+            </div>
+
+            <!-- セクション3: ポートスキャン -->
+            <div class="section">
+                <div class="section-header">
+                    <div class="section-title">
+                        <span class="section-icon">🔌</span>
+                        ポート情報
+                    </div>
+                </div>
+                <div class="card-actions">
+                    <button class="btn btn-primary btn-small" onclick="openPortScanConfig('${ip}')">
+                        ポートスキャン実行
+                    </button>
+                </div>
+                <div id="ports-${ip.replace(/\./g, '-')}" class="ports-list" style="margin-top: 15px;">
+                    <p style="color: #999; font-size: 0.9rem;">ポートスキャンを実行してください</p>
+                </div>
+            </div>
+        </div>
+    `;
+
+    return card;
+}
+
+// カードの開閉
+function toggleCard(ip) {
+    const bodyId = `body-${ip.replace(/\./g, '-')}`;
+    const toggleId = `toggle-${ip.replace(/\./g, '-')}`;
+    const body = document.getElementById(bodyId);
+    const toggle = document.getElementById(toggleId);
+
+    if (body.classList.contains('expanded')) {
+        body.classList.remove('expanded');
+        toggle.classList.remove('expanded');
+    } else {
+        body.classList.add('expanded');
+        toggle.classList.add('expanded');
+    }
+}
+
+// ポートスキャン設定モーダルを開く
+let currentScanHost = null;
+
+function openPortScanConfig(ip) {
+    currentScanHost = ip;
+    const modal = document.getElementById('portScanConfigModal');
     modal.classList.remove('hidden');
-    loading.classList.remove('hidden');
-    content.classList.add('hidden');
 
-    document.getElementById('modalHostIP').textContent = 'ホスト: ' + host;
+    // デフォルトのコマンドを設定
+    document.getElementById('scanCommand').value = '-sT -sV';
+}
+
+// ポートスキャン設定モーダルを閉じる
+function closePortScanConfig() {
+    const modal = document.getElementById('portScanConfigModal');
+    modal.classList.add('hidden');
+    currentScanHost = null;
+}
+
+// ポートスキャンを実行
+async function executePortScan() {
+    if (!currentScanHost) {
+        showNotification('スキャン対象ホストが指定されていません', 'error');
+        return;
+    }
+
+    const scanCommand = document.getElementById('scanCommand').value.trim();
+    if (!scanCommand) {
+        showNotification('スキャンコマンドを入力してください', 'error');
+        return;
+    }
+
+    // モーダルを閉じる
+    closePortScanConfig();
+
+    // スキャン中の表示
+    const portsDiv = document.getElementById(`ports-${currentScanHost.replace(/\./g, '-')}`);
+    portsDiv.innerHTML = '<p style="color: #667eea; font-size: 0.9rem;">⏳ ポートスキャン中...</p>';
 
     try {
-        const response = await fetch(`/api/port-scan/${host}`, {
+        const response = await fetch(`/api/port-scan/${currentScanHost}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                arguments: '-sT -sV'  // TCPコネクトスキャン + バージョン検出
+                arguments: scanCommand
             })
         });
 
         const data = await response.json();
 
-        loading.classList.add('hidden');
-        content.classList.remove('hidden');
-
         if (data.status === 'success') {
-            displayPortScanResults(data.data);
+            showNotification(data.message, 'success');
+            // ポーリングを開始して結果を取得
+            pollPortScanResults(currentScanHost);
         } else {
             showNotification('ポートスキャンに失敗しました: ' + data.message, 'error');
-            closeModal();
+            portsDiv.innerHTML = '<p style="color: #f56565; font-size: 0.9rem;">スキャンに失敗しました</p>';
         }
     } catch (error) {
         console.error('ポートスキャンエラー:', error);
         showNotification('ポートスキャンに失敗しました', 'error');
-        loading.classList.add('hidden');
-        closeModal();
+        portsDiv.innerHTML = '<p style="color: #f56565; font-size: 0.9rem;">スキャンに失敗しました</p>';
     }
 }
 
-// ポートスキャン結果を表示
-function displayPortScanResults(data) {
-    const osDiv = document.getElementById('modalHostOS');
-    const tbody = document.getElementById('portsTableBody');
+// ポートスキャン結果をポーリング
+async function pollPortScanResults(host) {
+    const maxAttempts = 120; // 最大2分間ポーリング
+    let attempts = 0;
 
-    // OS情報を表示
-    if (data.os) {
-        osDiv.innerHTML = `<strong>OS:</strong> ${data.os}`;
-        osDiv.style.display = 'block';
-    } else {
-        osDiv.style.display = 'none';
-    }
+    const pollInterval = setInterval(async () => {
+        attempts++;
 
-    // ポート情報を表示
-    tbody.innerHTML = '';
+        try {
+            const response = await fetch(`/api/port-scan/${host}`);
+            const data = await response.json();
 
-    if (data.ports.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #999;">開いているポートが見つかりませんでした</td></tr>';
-        return;
-    }
-
-    data.ports.forEach(port => {
-        const row = document.createElement('tr');
-
-        const stateColor = port.state === 'open' ? '#48bb78' : '#f56565';
-        const version = port.version ? `${port.product} ${port.version}` : port.product || '-';
-
-        row.innerHTML = `
-            <td><strong>${port.port}</strong></td>
-            <td>${port.protocol}</td>
-            <td style="color: ${stateColor}; font-weight: 600;">${port.state}</td>
-            <td>${port.service || '-'}</td>
-            <td>${version}</td>
-        `;
-
-        tbody.appendChild(row);
-    });
-}
-
-// モーダルを閉じる
-function closeModal() {
-    const modal = document.getElementById('portScanModal');
-    modal.classList.add('hidden');
-}
-
-// ホストを削除
-async function removeHost(host) {
-    if (!confirm(`ホスト ${host} を削除しますか?`)) {
-        return;
-    }
-
-    try {
-        const response = await fetch(`/api/host/${host}`, {
-            method: 'DELETE'
-        });
-
-        const data = await response.json();
-
-        if (data.status === 'success') {
-            showNotification('ホストを削除しました', 'success');
-            loadResults();
-        } else {
-            showNotification('削除に失敗しました: ' + data.message, 'error');
+            if (data.status === 'success') {
+                // 結果を表示
+                displayPortResults(host, data.data);
+                clearInterval(pollInterval);
+            } else if (attempts >= maxAttempts) {
+                // タイムアウト
+                const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
+                portsDiv.innerHTML = '<p style="color: #f56565; font-size: 0.9rem;">スキャンがタイムアウトしました</p>';
+                clearInterval(pollInterval);
+            }
+        } catch (error) {
+            console.error('結果取得エラー:', error);
+            if (attempts >= maxAttempts) {
+                clearInterval(pollInterval);
+            }
         }
-    } catch (error) {
-        console.error('削除エラー:', error);
-        showNotification('削除に失敗しました', 'error');
+    }, 1000); // 1秒ごとにチェック
+}
+
+// ポート結果を表示
+function displayPortResults(host, data) {
+    const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
+
+    if (!data || data.ports.length === 0) {
+        portsDiv.innerHTML = '<p style="color: #999; font-size: 0.9rem;">開いているポートが見つかりませんでした</p>';
+        return;
     }
+
+    let html = '';
+
+    // スキャンステージ表示
+    if (data.scan_stage) {
+        const stageText = data.scan_stage === 'priority' ? '優先ポートスキャン結果' : '全ポートスキャン結果';
+        html += `<p style="color: #667eea; font-weight: 600; margin-bottom: 10px;">${stageText}</p>`;
+    }
+
+    // OS情報
+    if (data.os) {
+        html += `<div style="background: #f7fafc; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+            <strong>OS:</strong> ${data.os}
+        </div>`;
+    }
+
+    // ポートリスト
+    data.ports.forEach(port => {
+        const stateClass = port.state === 'open' ? '' : 'closed';
+        const version = port.version ? `${port.product} ${port.version}` : port.product || '';
+
+        html += `
+            <div class="port-item ${stateClass}">
+                <div>
+                    <span class="port-number">${port.port}/${port.protocol}</span>
+                    <span class="port-service">${port.service || 'unknown'}</span>
+                </div>
+                <div style="color: #666; font-size: 0.85rem;">${version}</div>
+            </div>
+        `;
+    });
+
+    portsDiv.innerHTML = html;
+}
+
+// モーダルを閉じる（互換性のため残す）
+function closeModal() {
+    closePortScanConfig();
 }
 
 // 通知を表示
@@ -379,8 +482,8 @@ document.head.appendChild(style);
 
 // モーダルの外側クリックで閉じる
 document.addEventListener('click', function(e) {
-    const modal = document.getElementById('portScanModal');
+    const modal = document.getElementById('portScanConfigModal');
     if (e.target === modal) {
-        closeModal();
+        closePortScanConfig();
     }
 });

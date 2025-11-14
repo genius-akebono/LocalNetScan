@@ -47,54 +47,34 @@
             </div>
         </div>
 
-        <div class="hosts-container">
-            <table id="hostsTable" class="hosts-table">
-                <thead>
-                    <tr>
-                        <th>IPアドレス</th>
-                        <th>ホスト名</th>
-                        <th>サブネット</th>
-                        <th>ベンダー</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody id="hostsTableBody">
-                    <tr class="no-data">
-                        <td colspan="5">スキャンを実行してください</td>
-                    </tr>
-                </tbody>
-            </table>
+        <div id="hostsContainer" class="hosts-grid">
+            <!-- ホストカードがここに動的に追加されます -->
         </div>
     </div>
 
-    <!-- ポートスキャン結果モーダル -->
-    <div id="portScanModal" class="modal hidden">
+    <!-- ポートスキャン設定モーダル -->
+    <div id="portScanConfigModal" class="modal hidden">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>ポートスキャン結果</h2>
-                <button class="close-btn" onclick="closeModal()">&times;</button>
+                <h2>ポートスキャン設定</h2>
+                <button class="close-btn" onclick="closePortScanConfig()">&times;</button>
             </div>
             <div class="modal-body">
-                <div id="portScanLoading" class="loading hidden">
-                    <div class="spinner"></div>
-                    <p>ポートスキャン実行中...</p>
+                <div class="form-group">
+                    <label for="scanCommand">nmapコマンド引数:</label>
+                    <input type="text" id="scanCommand" class="input-field"
+                           value="-sT -sV"
+                           placeholder="例: -sT -sV -p 1-1000" />
+                    <p class="help-text">
+                        デフォルト: -sT -sV (TCP接続スキャン + バージョン検出)<br>
+                        例: -sT -p 80,443,3000 (特定ポートのみ)<br>
+                        例: -sT -p 1-1000 (ポート1-1000)<br>
+                        ⚠️ -sS (SYNスキャン) はroot権限が必要です
+                    </p>
                 </div>
-                <div id="portScanContent">
-                    <h3 id="modalHostIP"></h3>
-                    <div id="modalHostOS" class="host-os"></div>
-                    <table class="ports-table">
-                        <thead>
-                            <tr>
-                                <th>ポート</th>
-                                <th>プロトコル</th>
-                                <th>状態</th>
-                                <th>サービス</th>
-                                <th>バージョン</th>
-                            </tr>
-                        </thead>
-                        <tbody id="portsTableBody">
-                        </tbody>
-                    </table>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closePortScanConfig()">キャンセル</button>
+                    <button class="btn btn-primary" onclick="executePortScan()">スキャン実行</button>
                 </div>
             </div>
         </div>
