@@ -446,7 +446,7 @@ function createPortScanTabs(host) {
                         data-tab="full"
                         onclick="switchTab('${host}', 'full')"
                         style="flex: 1; padding: 12px 20px; background: #cbd5e0; color: #4a5568; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; font-size: 0.95rem; transition: all 0.3s;">
-                    🔍 全ポート (1-65535)<br><span style="font-size: 0.75rem; font-weight: 400; opacity: 0.8;">🚀 並列5スレッド</span>
+                    🔍 全ポート (1-65535)<br><span style="font-size: 0.75rem; font-weight: 400; opacity: 0.8;">🚀 並列6スレッド</span>
                 </button>
             </div>
 
@@ -468,7 +468,7 @@ function createPortScanTabs(host) {
                     <div style="background: #f7fafc; padding: 15px; border-radius: 8px;">
                         <h4 style="margin: 0 0 10px 0; color: #4a5568;">🔍 全ポートスキャン進捗</h4>
                         <div id="full-progress-${hostKey}" style="font-size: 0.9rem;">
-                            <div><input type="checkbox" disabled> 🚀 並列スキャン待機中（5スレッド）...</div>
+                            <div><input type="checkbox" disabled> 🚀 並列スキャン待機中（6スレッド）...</div>
                         </div>
                         <div id="full-scan-progress-bar-container-${hostKey}" style="display: none; margin-top: 15px;">
                             <div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden;">
@@ -476,7 +476,7 @@ function createPortScanTabs(host) {
                                      style="width: 0%; background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; transition: width 0.3s;"></div>
                             </div>
                             <div id="full-scan-progress-text-${hostKey}" style="margin-top: 8px; color: #718096; font-size: 0.85rem;">
-                                🚀 高速並列スキャン実行中（5スレッド）...
+                                🚀 高速並列スキャン実行中（6スレッド）...
                             </div>
                         </div>
                     </div>
@@ -571,24 +571,42 @@ function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
             <div style="margin-bottom: 5px; color: #f56565;"><input type="checkbox" disabled> ❌ スキャン失敗</div>
         `;
     } else if (stage === 'scanning') {
-        // 全ポートスキャン実行中（進捗％付き）- 5スレッドに合わせて調整
+        // 全ポートスキャン実行中（進捗％付き）- 6スレッド、2段階スキャン
         let estimatedProgress = 0;
-        if (elapsedSeconds <= 8) {
-            estimatedProgress = Math.min(30, (elapsedSeconds / 8) * 30);
-        } else if (elapsedSeconds <= 16) {
-            estimatedProgress = 30 + ((elapsedSeconds - 8) / 8) * 40;
-        } else if (elapsedSeconds <= 24) {
-            estimatedProgress = 70 + ((elapsedSeconds - 16) / 8) * 25;
+        let scanPhase = '';
+
+        // 2段階スキャン: ポートスキャン（0-50%）→ サービス情報取得（50-99%）
+        if (elapsedSeconds <= 6) {
+            // ポートスキャン段階（6秒で50%）
+            estimatedProgress = Math.min(50, (elapsedSeconds / 6) * 50);
+            scanPhase = 'ポートスキャン';
+        } else if (elapsedSeconds <= 14) {
+            // サービス情報取得段階（8秒で50%→90%）
+            estimatedProgress = 50 + ((elapsedSeconds - 6) / 8) * 40;
+            scanPhase = 'サービス情報取得';
         } else {
-            estimatedProgress = Math.min(99, 95 + ((elapsedSeconds - 24) / 8) * 4);
+            // 最終段階（90%→99%）
+            estimatedProgress = Math.min(99, 90 + ((elapsedSeconds - 14) / 6) * 9);
+            scanPhase = 'サービス情報取得';
         }
         estimatedProgress = Math.round(estimatedProgress);
 
-        html = `
-            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
-            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
-            <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🚀 並列スキャン実行中... ${estimatedProgress}%</div>
-        `;
+        // 進捗表示を2段階に分離
+        if (estimatedProgress < 50) {
+            html = `
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🚀 ポートスキャン実行中... ${estimatedProgress}%</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> サービス情報取得待機中...</div>
+            `;
+        } else {
+            html = `
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ✅ ポートスキャン完了</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🔍 サービス情報取得中... ${estimatedProgress}%</div>
+            `;
+        }
 
         // プログレスバーを表示
         const progressBarContainer = document.getElementById(`${tabName}-scan-progress-bar-container-${hostKey}`);
@@ -600,7 +618,7 @@ function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
                 progressBar.style.width = `${estimatedProgress}%`;
             }
             if (progressText) {
-                progressText.textContent = `🚀 高速並列スキャン実行中（5スレッド）| 経過時間: ${elapsedSeconds}秒 | ${estimatedProgress}%`;
+                progressText.textContent = `🚀 高速並列スキャン実行中（6スレッド）| ${scanPhase}: ${estimatedProgress}% | 経過時間: ${elapsedSeconds}秒`;
             }
         }
     }
