@@ -338,21 +338,34 @@ def get_process_info(host):
     try:
         # lsof または netstat を使用してポート情報を取得
         # Linuxの場合は ss または netstat を使用
-        result = subprocess.run(
-            ['ss', '-tunlp'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-
-        if result.returncode != 0:
-            # ssが使えない場合はnetstatを試す
+        result = None
+        try:
             result = subprocess.run(
-                ['netstat', '-tunlp'],
+                ['ss', '-tunlp'],
                 capture_output=True,
                 text=True,
                 timeout=10
             )
+        except FileNotFoundError:
+            # ssが見つからない場合はnetstatを試す
+            pass
+
+        if result is None or result.returncode != 0:
+            # ssが使えない場合はnetstatを試す
+            try:
+                result = subprocess.run(
+                    ['netstat', '-tunlp'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+            except FileNotFoundError:
+                # netstatも見つからない場合は空の結果を返す
+                return jsonify({
+                    'status': 'success',
+                    'data': {},
+                    'warning': 'ssまたはnetstatコマンドが見つかりません'
+                })
 
         output = result.stdout
 
