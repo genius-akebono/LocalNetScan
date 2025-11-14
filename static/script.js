@@ -529,9 +529,9 @@ function updateFullScanProgress(host, elapsedSeconds, isParallel = false) {
         if (elapsedSeconds <= 30) {
             estimatedProgress = Math.min(50, (elapsedSeconds / 30) * 50);
         } else if (elapsedSeconds <= 60) {
-            estimatedProgress = 50 + ((elapsedSeconds - 30) / 30) * 30);
+            estimatedProgress = 50 + ((elapsedSeconds - 30) / 30) * 30;
         } else if (elapsedSeconds <= 90) {
-            estimatedProgress = 80 + ((elapsedSeconds - 60) / 30) * 15);
+            estimatedProgress = 80 + ((elapsedSeconds - 60) / 30) * 15;
         } else {
             estimatedProgress = Math.min(98, 95 + ((elapsedSeconds - 90) / 30) * 3);
         }
