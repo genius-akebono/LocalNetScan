@@ -580,15 +580,37 @@ async function displayPortResults(host, data, stage = 'full') {
     // スキャン結果セクションを作成
     const resultSection = document.createElement('div');
     resultSection.id = `${stage}-results-${host.replace(/\./g, '-')}`;
-    resultSection.style.cssText = stage === 'priority' ? 'margin-bottom: 10px;' : 'margin-top: 20px;';
+    resultSection.style.cssText = stage === 'priority' ? 'margin-bottom: 20px;' : 'margin-top: 20px;';
 
     let html = '';
 
     // スキャンステージ表示
-    const stageText = stage === 'priority' ? '優先ポートスキャン結果' : '全ポートスキャン結果';
+    const stageText = stage === 'priority' ? '優先ポートスキャン' : '全ポートスキャン';
     const stageBadgeColor = stage === 'priority' ? '#fbbf24' : '#10b981';
-    html += `<div style="background: ${stageBadgeColor}22; color: ${stageBadgeColor}; padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-weight: 600; display: inline-block;">
+    html += `<div style="background: ${stageBadgeColor}22; color: ${stageBadgeColor}; padding: 8px 12px; border-radius: 6px; margin-bottom: 15px; font-weight: 600; display: inline-block;">
         ${stageText}
+    </div>`;
+
+    // スキャン進捗チェックボックス（優先/全スキャン両方で表示）
+    html += `<div style="background: #f0f4f8; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 0.9rem;">
+        <h4 style="margin: 0 0 10px 0; color: #4a5568; font-size: 0.95rem;">スキャン進捗</h4>
+        <div style="margin-bottom: 5px;">
+            <input type="checkbox" checked disabled> スキャン開始
+        </div>
+        <div style="margin-bottom: 5px;">
+            <input type="checkbox" checked disabled> コマンド実行完了
+        </div>
+        <div style="margin-bottom: 5px;">
+            <input type="checkbox" checked disabled> ポート検出完了
+        </div>
+        <div style="margin-bottom: 5px;">
+            <input type="checkbox" checked disabled> サービス情報取得完了
+        </div>
+        ${isLocalHost ? `
+            <div style="margin-bottom: 5px;">
+                <input type="checkbox" ${processInfoStatus === 'available' ? 'checked' : ''} disabled> プロセス情報取得完了
+            </div>
+        ` : ''}
     </div>`;
 
     // OS情報（全ポートスキャン時のみ表示）
@@ -598,25 +620,8 @@ async function displayPortResults(host, data, stage = 'full') {
         </div>`;
     }
 
-    // プロセス情報取得状況をチェックボックスで表示
-    html += `<div style="background: #f0f4f8; padding: 10px; border-radius: 6px; margin-bottom: 10px; font-size: 0.9rem;">
-        <div style="margin-bottom: 5px;">
-            <input type="checkbox" checked disabled> ポートスキャン完了
-        </div>
-        <div style="margin-bottom: 5px;">
-            <input type="checkbox" ${processInfoStatus !== 'loading' ? 'checked' : ''} disabled> プロセス情報取得${processInfoStatus === 'loading' ? '中...' : '完了'}
-        </div>
-        ${processInfoStatus === 'remote' ? `
-            <div style="margin-top: 8px; padding: 8px; background: #fff3cd; border-radius: 4px; font-size: 0.85rem; color: #856404;">
-                ℹ️ リモートホストのためプロセス情報は取得できません
-            </div>
-        ` : ''}
-        ${processInfoStatus === 'available' ? `
-            <div style="margin-top: 8px; padding: 8px; background: #d1fae5; border-radius: 4px; font-size: 0.85rem; color: #065f46;">
-                ✓ ローカルホストのプロセス情報を表示します
-            </div>
-        ` : ''}
-    </div>`;
+    // ポートリスト見出し
+    html += `<h4 style="margin: 15px 0 10px 0; color: #4a5568; font-size: 0.95rem;">検出されたポート</h4>`;
 
     // ポートリスト
     data.ports.forEach(port => {
