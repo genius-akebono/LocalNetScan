@@ -263,17 +263,25 @@ function createHostCard(ip, info) {
     return card;
 }
 
-// カードの開閉
+// カードの開閉（排他制御）
 function toggleCard(ip) {
     const bodyId = `body-${ip.replace(/\./g, '-')}`;
     const toggleId = `toggle-${ip.replace(/\./g, '-')}`;
     const body = document.getElementById(bodyId);
     const toggle = document.getElementById(toggleId);
 
-    if (body.classList.contains('expanded')) {
-        body.classList.remove('expanded');
-        toggle.classList.remove('expanded');
-    } else {
+    const isCurrentlyExpanded = body.classList.contains('expanded');
+
+    // 全てのカードを閉じる
+    document.querySelectorAll('.card-body').forEach(b => {
+        b.classList.remove('expanded');
+    });
+    document.querySelectorAll('.card-toggle').forEach(t => {
+        t.classList.remove('expanded');
+    });
+
+    // クリックされたカードが閉じていた場合は開く
+    if (!isCurrentlyExpanded) {
         body.classList.add('expanded');
         toggle.classList.add('expanded');
     }
@@ -425,6 +433,53 @@ function closeModal() {
     closePortScanConfig();
 }
 
+// sudoパスワードモーダルを開く
+function openSudoPasswordModal() {
+    const modal = document.getElementById('sudoPasswordModal');
+    modal.classList.remove('hidden');
+}
+
+// sudoパスワードモーダルを閉じる
+function closeSudoPasswordModal() {
+    const modal = document.getElementById('sudoPasswordModal');
+    modal.classList.add('hidden');
+    document.getElementById('sudoPassword').value = '';
+}
+
+// sudoパスワードを保存
+async function saveSudoPassword() {
+    const password = document.getElementById('sudoPassword').value;
+
+    if (!password) {
+        showNotification('パスワードを入力してください', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/sudo-password', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                password: password
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            showNotification('sudoパスワードを設定しました', 'success');
+            closeSudoPasswordModal();
+        } else {
+            showNotification('設定に失敗しました: ' + data.message, 'error');
+        }
+    } catch (error) {
+        console.error('sudo設定エラー:', error);
+        showNotification('設定に失敗しました', 'error');
+    }
+}
+
 // 通知を表示
 function showNotification(message, type = 'info') {
     // シンプルな通知実装
@@ -482,8 +537,13 @@ document.head.appendChild(style);
 
 // モーダルの外側クリックで閉じる
 document.addEventListener('click', function(e) {
-    const modal = document.getElementById('portScanConfigModal');
-    if (e.target === modal) {
+    const portScanModal = document.getElementById('portScanConfigModal');
+    const sudoModal = document.getElementById('sudoPasswordModal');
+
+    if (e.target === portScanModal) {
         closePortScanConfig();
+    }
+    if (e.target === sudoModal) {
+        closeSudoPasswordModal();
     }
 });

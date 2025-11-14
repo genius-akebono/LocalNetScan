@@ -19,6 +19,7 @@ class NetworkScanner:
         self.scan_results = {}
         self.nmap_available = False
         self.nmap_error = None
+        self.sudo_password = None
 
         try:
             self.nm = nmap.PortScanner()
@@ -37,6 +38,16 @@ class NetworkScanner:
             print("  https://nmap.org/download.html からダウンロードしてインストール")
             print("=" * 80)
             self.nm = None
+
+    def set_sudo_password(self, password: str):
+        """
+        sudoパスワードを設定
+
+        Args:
+            password: sudoパスワード
+        """
+        self.sudo_password = password
+        print("sudoパスワードが設定されました")
 
     def check_nmap_available(self) -> bool:
         """
@@ -219,6 +230,94 @@ class NetworkScanner:
         self.scan_results = all_results
         return all_results
 
+    def _run_nmap_with_sudo(self, host: str, arguments: str) -> Dict:
+        """
+        sudoを使用してnmapコマンドを実行
+
+        Args:
+            host: スキャン対象のIPアドレス
+            arguments: nmapの引数
+
+        Returns:
+            Dict: スキャン結果（XMLパース後）
+        """
+        import subprocess
+        import tempfile
+        import xml.etree.ElementTree as ET
+
+        # 一時ファイルにXML出力を保存
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as tmp:
+            output_file = tmp.name
+
+        try:
+            # sudoでnmapを実行（パスワードを標準入力から渡す）
+            cmd = ['sudo', '-S', 'nmap', '-oX', output_file] + arguments.split() + [host]
+
+            process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+            # sudoパスワードを渡す
+            stdout, stderr = process.communicate(input=f"{self.sudo_password}\n", timeout=300)
+
+            if process.returncode != 0:
+                if 'incorrect password' in stderr.lower() or 'sorry' in stderr.lower():
+                    raise Exception("sudoパスワードが正しくありません")
+                print(f"nmap標準出力: {stdout}")
+                print(f"nmapエラー出力: {stderr}")
+
+            # XML結果を読み込んでパース
+            tree = ET.parse(output_file)
+            root = tree.getroot()
+
+            # 結果を辞書形式に変換
+            scan_result = {
+                'host': host,
+                'ports': [],
+                'os': ''
+            }
+
+            # ホスト情報を取得
+            for host_elem in root.findall('host'):
+                # ポート情報を取得
+                for port_elem in host_elem.findall('.//port'):
+                    port_id = port_elem.get('portid')
+                    protocol = port_elem.get('protocol')
+                    state_elem = port_elem.find('state')
+                    service_elem = port_elem.find('service')
+
+                    if state_elem is not None:
+                        state = state_elem.get('state')
+                        service_name = service_elem.get('name', '') if service_elem is not None else ''
+                        product = service_elem.get('product', '') if service_elem is not None else ''
+                        version = service_elem.get('version', '') if service_elem is not None else ''
+
+                        scan_result['ports'].append({
+                            'port': int(port_id),
+                            'protocol': protocol,
+                            'state': state,
+                            'service': service_name,
+                            'product': product,
+                            'version': version
+                        })
+
+                # OS情報を取得
+                osmatch = host_elem.find('.//osmatch')
+                if osmatch is not None:
+                    scan_result['os'] = osmatch.get('name', '')
+
+            return scan_result
+
+        finally:
+            # 一時ファイルを削除
+            import os
+            if os.path.exists(output_file):
+                os.remove(output_file)
+
     def port_scan(self, host: str, arguments: str = '-sS -sV', priority_only: bool = False) -> Dict:
         """
         指定されたホストに対して詳細ポートスキャンを実行
@@ -262,48 +361,73 @@ class NetworkScanner:
                 print(f"スキャンタイプ: {arguments}")
                 scan_args = arguments
             print(f"{'='*60}")
-            print("スキャン中... (ポートとサービスを検出しています)")
 
-            # -sS はroot権限が必要なため、権限がない場合は -sT を使用
-            try:
-                self.nm.scan(hosts=host, arguments=scan_args)
-            except Exception as e:
-                # SYNスキャンが失敗した場合はTCPコネクトスキャンにフォールバック
-                if '-sS' in scan_args:
-                    print(f"⚠ SYNスキャン失敗、TCPコネクトスキャンに切り替え")
-                    scan_args = scan_args.replace('-sS', '-sT')
-                    self.nm.scan(hosts=host, arguments=scan_args)
-                else:
-                    raise
+            # root権限が必要なスキャンかチェック
+            needs_root = '-sS' in scan_args or '-sU' in scan_args or '-O' in scan_args
 
-            if host in self.nm.all_hosts():
-                print("\n検出されたポート:")
-                # ポート情報を取得
-                for proto in self.nm[host].all_protocols():
-                    ports = self.nm[host][proto].keys()
-                    for port in ports:
-                        port_info = self.nm[host][proto][port]
-                        result['ports'].append({
-                            'port': port,
-                            'protocol': proto,
-                            'state': port_info['state'],
-                            'service': port_info.get('name', ''),
-                            'version': port_info.get('version', ''),
-                            'product': port_info.get('product', '')
-                        })
+            if needs_root and self.sudo_password:
+                print("sudo権限でnmapを実行中...")
+                # sudoでnmapを実行
+                sudo_result = self._run_nmap_with_sudo(host, scan_args)
+                result['ports'] = sudo_result['ports']
+                result['os'] = sudo_result['os']
 
-                        # 見つかったポートを表示
-                        service = port_info.get('name', 'unknown')
+                # 結果を表示
+                if result['ports']:
+                    print("\n検出されたポート:")
+                    for port_info in result['ports']:
+                        service = port_info.get('service', 'unknown')
                         version = port_info.get('version', '')
                         product = port_info.get('product', '')
                         version_str = f"{product} {version}".strip() if product or version else ""
-                        print(f"  ✓ {port}/{proto:3s} - {service:15s} {version_str}")
+                        print(f"  ✓ {port_info['port']}/{port_info['protocol']:3s} - {service:15s} {version_str}")
 
-                # OS情報（あれば）
-                if 'osmatch' in self.nm[host]:
-                    if len(self.nm[host]['osmatch']) > 0:
-                        result['os'] = self.nm[host]['osmatch'][0]['name']
-                        print(f"\nOS検出: {result['os']}")
+                if result['os']:
+                    print(f"\nOS検出: {result['os']}")
+
+            else:
+                print("スキャン中... (ポートとサービスを検出しています)")
+                # -sS はroot権限が必要なため、権限がない場合は -sT を使用
+                try:
+                    self.nm.scan(hosts=host, arguments=scan_args)
+                except Exception as e:
+                    # SYNスキャンが失敗した場合はTCPコネクトスキャンにフォールバック
+                    if '-sS' in scan_args and not self.sudo_password:
+                        print(f"⚠ SYNスキャンにはroot権限が必要です。TCPコネクトスキャンに切り替えます")
+                        print(f"  ヒント: sudo設定からパスワードを設定すると-sSスキャンが使用できます")
+                        scan_args = scan_args.replace('-sS', '-sT')
+                        self.nm.scan(hosts=host, arguments=scan_args)
+                    else:
+                        raise
+
+                if host in self.nm.all_hosts():
+                    print("\n検出されたポート:")
+                    # ポート情報を取得
+                    for proto in self.nm[host].all_protocols():
+                        ports = self.nm[host][proto].keys()
+                        for port in ports:
+                            port_info = self.nm[host][proto][port]
+                            result['ports'].append({
+                                'port': port,
+                                'protocol': proto,
+                                'state': port_info['state'],
+                                'service': port_info.get('name', ''),
+                                'version': port_info.get('version', ''),
+                                'product': port_info.get('product', '')
+                            })
+
+                            # 見つかったポートを表示
+                            service = port_info.get('name', 'unknown')
+                            version = port_info.get('version', '')
+                            product = port_info.get('product', '')
+                            version_str = f"{product} {version}".strip() if product or version else ""
+                            print(f"  ✓ {port}/{proto:3s} - {service:15s} {version_str}")
+
+                    # OS情報（あれば）
+                    if 'osmatch' in self.nm[host]:
+                        if len(self.nm[host]['osmatch']) > 0:
+                            result['os'] = self.nm[host]['osmatch'][0]['name']
+                            print(f"\nOS検出: {result['os']}")
 
             elapsed_time = time.time() - start_time
             print(f"\n{'='*60}")
