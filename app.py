@@ -264,6 +264,42 @@ def remove_host(host):
         }), 404
 
 
+@app.route('/api/sudo-password', methods=['POST'])
+def set_sudo_password():
+    """
+    sudoパスワードを設定
+
+    Request Body:
+        {
+            "password": "sudo password"
+        }
+
+    Returns:
+        JSON: 設定結果
+    """
+    if not request.json or 'password' not in request.json:
+        return jsonify({
+            'status': 'error',
+            'message': 'パスワードが指定されていません'
+        }), 400
+
+    password = request.json['password']
+
+    try:
+        # パスワードをスキャナーに設定
+        scanner.set_sudo_password(password)
+
+        return jsonify({
+            'status': 'success',
+            'message': 'sudoパスワードを設定しました'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'設定に失敗しました: {str(e)}'
+        }), 500
+
+
 @app.before_request
 def limit_remote_addr():
     """

@@ -9,8 +9,15 @@
 <body>
     <div class="container">
         <header>
-            <h1>LocalNetScan</h1>
-            <p class="subtitle">ローカルネットワークスキャナー</p>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h1>LocalNetScan</h1>
+                    <p class="subtitle">ローカルネットワークスキャナー</p>
+                </div>
+                <button class="btn btn-secondary" onclick="openSudoPasswordModal()" style="height: fit-content;">
+                    🔑 sudo設定
+                </button>
+            </div>
         </header>
 
         <div class="controls">
@@ -75,6 +82,34 @@
                 <div class="modal-actions">
                     <button class="btn btn-secondary" onclick="closePortScanConfig()">キャンセル</button>
                     <button class="btn btn-primary" onclick="executePortScan()">スキャン実行</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- sudoパスワード設定モーダル -->
+    <div id="sudoPasswordModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>sudo権限設定</h2>
+                <button class="close-btn" onclick="closeSudoPasswordModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="color: #666; margin-bottom: 15px;">
+                    一部のnmapスキャン（-sS SYNスキャンなど）にはroot権限が必要です。<br>
+                    sudoパスワードを設定すると、自動的にsudoでスキャンを実行します。
+                </p>
+                <div class="form-group">
+                    <label for="sudoPassword">sudoパスワード:</label>
+                    <input type="password" id="sudoPassword" class="input-field"
+                           placeholder="パスワードを入力" />
+                    <p class="help-text">
+                        パスワードはサーバー側のメモリに一時保存されます（セッション終了時に削除）
+                    </p>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeSudoPasswordModal()">キャンセル</button>
+                    <button class="btn btn-primary" onclick="saveSudoPassword()">保存</button>
                 </div>
             </div>
         </div>
