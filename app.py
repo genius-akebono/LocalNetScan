@@ -184,37 +184,60 @@ def start_port_scan(host):
     scan_args = request.json.get('arguments', '-sT -sV') if request.json else '-sT -sV'
 
     def scan_priority_ports():
-        """優先ポートスキャンを実行"""
+        """優先ポートスキャンを実行（高速化）"""
         try:
             print(f"\n[並列スキャン] {host} の優先ポートをスキャン中...")
-            priority_result = scanner.port_scan(host, scan_args, priority_only=True)
+            # -T5 を追加して高速化
+            fast_scan_args = scan_args.replace('-sV', '-sV -T5') if '-sV' in scan_args else scan_args + ' -T5'
+            priority_result = scanner.port_scan(host, fast_scan_args, priority_only=True)
             port_scan_results[host] = priority_result
         except Exception as e:
             print(f"\n優先ポートスキャンエラー ({host}): {e}\n")
 
     def scan_full_ports():
-        """全ポートスキャンを並列実行（範囲分割）"""
+        """全ポートスキャンを並列実行（範囲分割 + 2段階スキャン）"""
         try:
-            print(f"\n[並列スキャン] {host} の全ポートをスキャン中（範囲分割）...")
+            print(f"\n[並列スキャン] {host} の全ポートをスキャン中（範囲分割・6スレッド）...")
 
-            # 全ポートを5つの範囲に分割して並列スキャン
+            # 全ポートを6つの範囲に分割して並列スキャン
             port_ranges = [
-                (1, 13107),
-                (13108, 26214),
-                (26215, 39321),
-                (39322, 52428),
-                (52429, 65535)
+                (1, 10922),
+                (10923, 21844),
+                (21845, 32766),
+                (32767, 43688),
+                (43689, 54610),
+                (54611, 65535)
             ]
 
             results = []
             threads = []
 
             def scan_range(start, end):
-                """指定範囲をスキャン"""
+                """指定範囲をスキャン（2段階: ポートスキャン→サービス情報取得）"""
                 try:
-                    range_args = f"-p {start}-{end} {scan_args}"
+                    # 第1段階: 高速ポートスキャン（ポートのみ検出）
+                    print(f"  [範囲 {start}-{end}] ポートスキャン中...")
+                    range_args = f"-p {start}-{end} -sT -T5 --open"
                     result = scanner.port_scan(host, range_args, priority_only=False, is_range_scan=True)
-                    results.append(result)
+
+                    # 発見したポートがあれば、サービス情報を取得
+                    if result.get('ports') and len(result['ports']) > 0:
+                        open_ports = [str(p['port']) for p in result['ports']]
+                        print(f"  [範囲 {start}-{end}] {len(open_ports)}個のポートを発見、サービス情報取得中...")
+
+                        # 第2段階: 発見したポートのみサービス情報取得
+                        ports_str = ','.join(open_ports)
+                        service_args = f"-p {ports_str} -sV -T5"
+                        service_result = scanner.port_scan(host, service_args, priority_only=False, is_range_scan=True)
+
+                        # サービス情報をマージ
+                        if service_result.get('ports'):
+                            results.append(service_result)
+                        else:
+                            results.append(result)
+                    else:
+                        print(f"  [範囲 {start}-{end}] ポートなし")
+
                 except Exception as e:
                     print(f"範囲 {start}-{end} のスキャンエラー: {e}")
 
