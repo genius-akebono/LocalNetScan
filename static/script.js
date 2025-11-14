@@ -319,15 +319,25 @@ async function executePortScan() {
         return;
     }
 
+    // ホストを一時変数に保存（モーダルを閉じる前に）
+    const targetHost = currentScanHost;
+
     // モーダルを閉じる
     closePortScanConfig();
 
-    // スキャン中の表示
-    const portsDiv = document.getElementById(`ports-${currentScanHost.replace(/\./g, '-')}`);
-    portsDiv.innerHTML = '<p style="color: #667eea; font-size: 0.9rem;">⏳ ポートスキャン中...</p>';
+    // スキャン中の表示（進捗チェックリスト）
+    const portsDiv = document.getElementById(`ports-${targetHost.replace(/\./g, '-')}`);
+    portsDiv.innerHTML = `
+        <div style="background: #f7fafc; padding: 15px; border-radius: 8px;">
+            <h4 style="margin: 0 0 10px 0; color: #4a5568;">スキャン進捗</h4>
+            <div id="scan-progress-${targetHost.replace(/\./g, '-')}" style="font-size: 0.9rem;">
+                <div><input type="checkbox" disabled> スキャン開始中...</div>
+            </div>
+        </div>
+    `;
 
     try {
-        const response = await fetch(`/api/port-scan/${currentScanHost}`, {
+        const response = await fetch(`/api/port-scan/${targetHost}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -341,8 +351,10 @@ async function executePortScan() {
 
         if (data.status === 'success') {
             showNotification(data.message, 'success');
+            // 進捗を更新
+            updateScanProgress(targetHost, 'started', scanCommand);
             // ポーリングを開始して結果を取得
-            pollPortScanResults(currentScanHost);
+            pollPortScanResults(targetHost);
         } else {
             showNotification('ポートスキャンに失敗しました: ' + data.message, 'error');
             portsDiv.innerHTML = '<p style="color: #f56565; font-size: 0.9rem;">スキャンに失敗しました</p>';
@@ -354,21 +366,70 @@ async function executePortScan() {
     }
 }
 
+// スキャン進捗を更新
+function updateScanProgress(host, stage, command = '') {
+    const progressDiv = document.getElementById(`scan-progress-${host.replace(/\./g, '-')}`);
+    if (!progressDiv) return;
+
+    let html = '';
+
+    if (stage === 'started') {
+        html = `
+            <div><input type="checkbox" checked disabled> スキャン開始</div>
+            <div><input type="checkbox" disabled> コマンド実行: nmap ${command}</div>
+            <div><input type="checkbox" disabled> ポート検出中...</div>
+        `;
+    } else if (stage === 'detecting') {
+        html = `
+            <div><input type="checkbox" checked disabled> スキャン開始</div>
+            <div><input type="checkbox" checked disabled> コマンド実行: nmap ${command}</div>
+            <div><input type="checkbox" disabled> ポート検出中...</div>
+        `;
+    } else if (stage === 'analyzing') {
+        html = `
+            <div><input type="checkbox" checked disabled> スキャン開始</div>
+            <div><input type="checkbox" checked disabled> コマンド実行完了</div>
+            <div><input type="checkbox" checked disabled> ポート検出完了</div>
+            <div><input type="checkbox" disabled> サービス情報取得中...</div>
+        `;
+    } else if (stage === 'complete') {
+        html = `
+            <div><input type="checkbox" checked disabled> スキャン開始</div>
+            <div><input type="checkbox" checked disabled> コマンド実行完了</div>
+            <div><input type="checkbox" checked disabled> ポート検出完了</div>
+            <div><input type="checkbox" checked disabled> サービス情報取得完了</div>
+            <div><input type="checkbox" checked disabled> 結果の解析完了</div>
+        `;
+    }
+
+    progressDiv.innerHTML = html;
+}
+
 // ポートスキャン結果をポーリング
 async function pollPortScanResults(host) {
     const maxAttempts = 120; // 最大2分間ポーリング
     let attempts = 0;
+    let progressStage = 'started';
 
     const pollInterval = setInterval(async () => {
         attempts++;
+
+        // 進捗ステージを更新
+        if (attempts === 2) {
+            updateScanProgress(host, 'detecting');
+        } else if (attempts === 5) {
+            updateScanProgress(host, 'analyzing');
+        }
 
         try {
             const response = await fetch(`/api/port-scan/${host}`);
             const data = await response.json();
 
             if (data.status === 'success') {
+                // 進捗完了
+                updateScanProgress(host, 'complete');
                 // 結果を表示
-                displayPortResults(host, data.data);
+                setTimeout(() => displayPortResults(host, data.data), 500);
                 clearInterval(pollInterval);
             } else if (attempts >= maxAttempts) {
                 // タイムアウト
@@ -386,7 +447,7 @@ async function pollPortScanResults(host) {
 }
 
 // ポート結果を表示
-function displayPortResults(host, data) {
+async function displayPortResults(host, data) {
     const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
 
     if (!data || data.ports.length === 0) {
@@ -409,23 +470,90 @@ function displayPortResults(host, data) {
         </div>`;
     }
 
+    // プロセス情報を取得
+    let processInfo = {};
+    try {
+        const response = await fetch(`/api/process-info/${host}`);
+        const processData = await response.json();
+        if (processData.status === 'success') {
+            processInfo = processData.data;
+        }
+    } catch (error) {
+        console.error('プロセス情報取得エラー:', error);
+    }
+
     // ポートリスト
     data.ports.forEach(port => {
         const stateClass = port.state === 'open' ? '' : 'closed';
         const version = port.version ? `${port.product} ${port.version}` : port.product || '';
+        const portKey = `${port.port}/${port.protocol}`;
+        const process = processInfo[portKey];
 
         html += `
             <div class="port-item ${stateClass}">
-                <div>
-                    <span class="port-number">${port.port}/${port.protocol}</span>
-                    <span class="port-service">${port.service || 'unknown'}</span>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div>
+                            <span class="port-number">${port.port}/${port.protocol}</span>
+                            <span class="port-service">${port.service || 'unknown'}</span>
+                        </div>
+                        <div style="color: #666; font-size: 0.85rem;">${version}</div>
+                        ${process ? `
+                            <div style="margin-top: 5px; font-size: 0.85rem; color: #4a5568;">
+                                <strong>PID:</strong> ${process.pid} |
+                                <strong>プロセス:</strong> ${process.name || 'unknown'}
+                            </div>
+                        ` : ''}
+                    </div>
+                    ${process && process.pid ? `
+                        <button class="btn-kill" onclick="killProcess(${process.pid}, '${host}', ${port.port})"
+                                style="padding: 5px 12px; background: #f56565; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">
+                            ⚠️ KILL
+                        </button>
+                    ` : ''}
                 </div>
-                <div style="color: #666; font-size: 0.85rem;">${version}</div>
             </div>
         `;
     });
 
     portsDiv.innerHTML = html;
+}
+
+// プロセスをKILL
+async function killProcess(pid, host, port) {
+    if (!confirm(`警告: PID ${pid} (ポート ${port}) のプロセスを終了しますか？\n\nこの操作は元に戻せません。`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/kill-process/${pid}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            showNotification(`プロセス ${pid} を終了しました`, 'success');
+            // 結果を再取得
+            setTimeout(() => {
+                fetch(`/api/port-scan/${host}`)
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.status === 'success') {
+                            displayPortResults(host, d.data);
+                        }
+                    });
+            }, 1000);
+        } else {
+            showNotification('プロセスの終了に失敗しました: ' + data.message, 'error');
+        }
+    } catch (error) {
+        console.error('プロセス終了エラー:', error);
+        showNotification('プロセスの終了に失敗しました', 'error');
+    }
 }
 
 // モーダルを閉じる（互換性のため残す）

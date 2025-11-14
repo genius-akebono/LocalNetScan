@@ -300,6 +300,144 @@ def set_sudo_password():
         }), 500
 
 
+@app.route('/api/process-info/<host>', methods=['GET'])
+def get_process_info(host):
+    """
+    指定されたホストのポートで動作しているプロセス情報を取得
+
+    Args:
+        host: IPアドレス
+
+    Returns:
+        JSON: プロセス情報 {port/protocol: {pid: xxx, name: xxx}}
+    """
+    import subprocess
+    import re
+
+    process_info = {}
+
+    try:
+        # lsof または netstat を使用してポート情報を取得
+        # Linuxの場合は ss または netstat を使用
+        result = subprocess.run(
+            ['ss', '-tunlp'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode != 0:
+            # ssが使えない場合はnetstatを試す
+            result = subprocess.run(
+                ['netstat', '-tunlp'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+        output = result.stdout
+
+        # 各行をパース
+        for line in output.split('\n'):
+            # ポート番号を抽出
+            # 例: tcp   LISTEN 0      128    0.0.0.0:22    0.0.0.0:*    users:(("sshd",pid=1234,fd=3))
+            match = re.search(r':(\d+)\s.*users:\(\("([^"]+)",pid=(\d+)', line)
+            if match:
+                port = match.group(1)
+                name = match.group(2)
+                pid = match.group(3)
+
+                # プロトコルを判定
+                protocol = 'tcp' if 'tcp' in line.lower() else 'udp'
+                port_key = f"{port}/{protocol}"
+
+                process_info[port_key] = {
+                    'pid': int(pid),
+                    'name': name
+                }
+
+        return jsonify({
+            'status': 'success',
+            'data': process_info
+        })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'status': 'error',
+            'message': 'プロセス情報の取得がタイムアウトしました'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'プロセス情報の取得に失敗しました: {str(e)}'
+        }), 500
+
+
+@app.route('/api/kill-process/<int:pid>', methods=['POST'])
+def kill_process(pid):
+    """
+    指定されたプロセスを終了
+
+    Args:
+        pid: プロセスID
+
+    Returns:
+        JSON: 終了結果
+    """
+    import subprocess
+    import signal
+
+    try:
+        # PIDが存在するか確認
+        try:
+            import os
+            os.kill(pid, 0)  # シグナル0で存在確認
+        except OSError:
+            return jsonify({
+                'status': 'error',
+                'message': f'PID {pid} のプロセスが見つかりません'
+            }), 404
+
+        # プロセスを終了
+        try:
+            os.kill(pid, signal.SIGTERM)  # まずSIGTERMで穏やかに終了
+            return jsonify({
+                'status': 'success',
+                'message': f'プロセス {pid} を終了しました'
+            })
+        except PermissionError:
+            # 権限がない場合はsudoで試す
+            if scanner.sudo_password:
+                result = subprocess.run(
+                    ['sudo', '-S', 'kill', str(pid)],
+                    input=f"{scanner.sudo_password}\n",
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    return jsonify({
+                        'status': 'success',
+                        'message': f'プロセス {pid} を終了しました（sudo使用）'
+                    })
+                else:
+                    return jsonify({
+                        'status': 'error',
+                        'message': f'プロセスの終了に失敗しました: {result.stderr}'
+                    }), 500
+            else:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'プロセスの終了に権限が必要です。sudo設定からパスワードを設定してください'
+                }), 403
+
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'プロセスの終了に失敗しました: {str(e)}'
+        }), 500
+
+
 @app.before_request
 def limit_remote_addr():
     """
