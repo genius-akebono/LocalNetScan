@@ -411,6 +411,7 @@ async function pollPortScanResults(host) {
     let attempts = 0;
     let progressStage = 'started';
     let lastStage = null;
+    let fullScanStartTime = null;
 
     const pollInterval = setInterval(async () => {
         attempts++;
@@ -420,20 +421,6 @@ async function pollPortScanResults(host) {
             updateScanProgress(host, 'detecting');
         } else if (attempts === 10) {
             updateScanProgress(host, 'analyzing');
-        } else if (attempts % 30 === 0 && attempts > 30) {
-            // 30秒ごとに進捗メッセージを更新
-            const progressDiv = document.getElementById(`scan-progress-${host.replace(/\./g, '-')}`);
-            if (progressDiv) {
-                const elapsedSeconds = attempts;
-                progressDiv.innerHTML = `
-                    <div><input type="checkbox" checked disabled> スキャン開始</div>
-                    <div><input type="checkbox" checked disabled> コマンド実行中</div>
-                    <div><input type="checkbox" disabled> ポート検出中... (${elapsedSeconds}秒経過)</div>
-                    <div style="margin-top: 10px; color: #666; font-size: 0.85rem;">
-                        ⏱️ 全ポートスキャンは時間がかかります。しばらくお待ちください...
-                    </div>
-                `;
-            }
         }
 
         try {
@@ -451,27 +438,23 @@ async function pollPortScanResults(host) {
                     // 優先ポートスキャンが完了した場合
                     if (currentStage === 'priority') {
                         updateScanProgress(host, 'analyzing');
-                        displayPortResults(host, data.data);
-                        // 全ポートスキャン待機メッセージを追加
-                        const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
-                        const waitingMsg = document.createElement('div');
-                        waitingMsg.id = `waiting-full-scan-${host.replace(/\./g, '-')}`;
-                        waitingMsg.style.cssText = 'margin-top: 15px; padding: 10px; background: #f7fafc; border-radius: 6px; color: #4a5568;';
-                        waitingMsg.innerHTML = '⏳ 全ポートスキャンを実行中... しばらくお待ちください';
-                        portsDiv.appendChild(waitingMsg);
+                        displayPortResults(host, data.data, 'priority');
+                        // 全ポートスキャン開始時刻を記録
+                        fullScanStartTime = attempts;
+                        // 全ポートスキャン進捗表示エリアを作成
+                        createFullScanProgressArea(host);
                     }
                     // 全ポートスキャンが完了した場合
                     else if (currentStage === 'full') {
                         updateScanProgress(host, 'complete');
-                        // 待機メッセージを削除
-                        const waitingMsg = document.getElementById(`waiting-full-scan-${host.replace(/\./g, '-')}`);
-                        if (waitingMsg) {
-                            waitingMsg.remove();
-                        }
                         // 最終結果を表示
-                        setTimeout(() => displayPortResults(host, data.data), 500);
+                        displayPortResults(host, data.data, 'full');
                         clearInterval(pollInterval);
                     }
+                } else if (currentStage === 'priority' && fullScanStartTime) {
+                    // 全ポートスキャン実行中の進捗％を更新
+                    const elapsedSinceFullStart = attempts - fullScanStartTime;
+                    updateFullScanProgress(host, elapsedSinceFullStart);
                 }
             } else if (attempts >= maxAttempts) {
                 // タイムアウト
@@ -490,36 +473,95 @@ async function pollPortScanResults(host) {
     }, 1000); // 1秒ごとにチェック
 }
 
-// ポート結果を表示
-async function displayPortResults(host, data) {
+// 全ポートスキャン進捗表示エリアを作成
+function createFullScanProgressArea(host) {
+    const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
+
+    const fullScanArea = document.createElement('div');
+    fullScanArea.id = `full-scan-area-${host.replace(/\./g, '-')}`;
+    fullScanArea.style.cssText = 'margin-top: 20px; padding: 15px; background: #f7fafc; border-radius: 8px; border-left: 4px solid #667eea;';
+    fullScanArea.innerHTML = `
+        <h4 style="margin: 0 0 10px 0; color: #4a5568; display: flex; align-items: center;">
+            <span style="margin-right: 8px;">🔍</span>
+            全ポートスキャン実行中
+        </h4>
+        <div id="full-scan-progress-${host.replace(/\./g, '-')}" style="font-size: 0.9rem;">
+            <div style="margin-bottom: 8px;">
+                <input type="checkbox" checked disabled> 優先ポートスキャン完了
+            </div>
+            <div style="margin-bottom: 8px;">
+                <input type="checkbox" disabled> 全ポート（1-65535）スキャン中... 0%
+            </div>
+            <div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; margin-top: 10px; overflow: hidden;">
+                <div id="full-scan-progress-bar-${host.replace(/\./g, '-')}"
+                     style="width: 0%; background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; transition: width 0.3s;"></div>
+            </div>
+            <div style="margin-top: 8px; color: #718096; font-size: 0.85rem;">
+                ⏱️ 全ポートスキャンは約1-2分かかります
+            </div>
+        </div>
+    `;
+
+    portsDiv.appendChild(fullScanArea);
+}
+
+// 全ポートスキャンの進捗％を更新
+function updateFullScanProgress(host, elapsedSeconds) {
+    const progressText = document.getElementById(`full-scan-progress-${host.replace(/\./g, '-')}`);
+    const progressBar = document.getElementById(`full-scan-progress-bar-${host.replace(/\./g, '-')}`);
+
+    if (!progressText || !progressBar) return;
+
+    // 全ポートスキャンは通常80-120秒かかると仮定して進捗を推定
+    // 最初の30秒で50%、その後緩やかに増加
+    let estimatedProgress = 0;
+    if (elapsedSeconds <= 30) {
+        estimatedProgress = Math.min(50, (elapsedSeconds / 30) * 50);
+    } else if (elapsedSeconds <= 60) {
+        estimatedProgress = 50 + ((elapsedSeconds - 30) / 30) * 30;
+    } else if (elapsedSeconds <= 90) {
+        estimatedProgress = 80 + ((elapsedSeconds - 60) / 30) * 15;
+    } else {
+        estimatedProgress = Math.min(98, 95 + ((elapsedSeconds - 90) / 30) * 3);
+    }
+
+    estimatedProgress = Math.round(estimatedProgress);
+
+    progressText.innerHTML = `
+        <div style="margin-bottom: 8px;">
+            <input type="checkbox" checked disabled> 優先ポートスキャン完了
+        </div>
+        <div style="margin-bottom: 8px;">
+            <input type="checkbox" disabled> 全ポート（1-65535）スキャン中... ${estimatedProgress}%
+        </div>
+        <div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; margin-top: 10px; overflow: hidden;">
+            <div id="full-scan-progress-bar-${host.replace(/\./g, '-')}"
+                 style="width: ${estimatedProgress}%; background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; transition: width 0.3s;"></div>
+        </div>
+        <div style="margin-top: 8px; color: #718096; font-size: 0.85rem;">
+            ⏱️ 経過時間: ${elapsedSeconds}秒
+        </div>
+    `;
+}
+
+// ポート結果を表示（優先ポートと全ポートを別々に表示）
+async function displayPortResults(host, data, stage = 'full') {
     const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
 
     if (!data || !data.ports || data.ports.length === 0) {
-        portsDiv.innerHTML = '<p style="color: #999; font-size: 0.9rem;">開いているポートが見つかりませんでした</p>';
+        if (stage === 'priority') {
+            // 優先ポートで何も見つからなかった場合
+            portsDiv.innerHTML = '<p style="color: #999; font-size: 0.9rem;">優先ポートでは開いているポートが見つかりませんでした</p>';
+        } else {
+            portsDiv.innerHTML = '<p style="color: #999; font-size: 0.9rem;">開いているポートが見つかりませんでした</p>';
+        }
         return;
     }
 
-    let html = '';
-
-    // スキャンステージ表示
-    if (data.scan_stage) {
-        const stageText = data.scan_stage === 'priority' ? '優先ポートスキャン結果' : '全ポートスキャン結果';
-        const stageBadgeColor = data.scan_stage === 'priority' ? '#fbbf24' : '#10b981';
-        html += `<div style="background: ${stageBadgeColor}22; color: ${stageBadgeColor}; padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-weight: 600; display: inline-block;">
-            ${stageText}
-        </div>`;
-    }
-
-    // OS情報
-    if (data.os) {
-        html += `<div style="background: #f7fafc; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
-            <strong>🖥️ OS:</strong> ${data.os}
-        </div>`;
-    }
-
-    // プロセス情報を取得（リモートホストの場合は空になる）
+    // プロセス情報を取得
     let processInfo = {};
     let isLocalHost = false;
+    let processInfoStatus = 'loading';
     try {
         const response = await fetch(`/api/process-info/${host}`);
         if (response.ok) {
@@ -527,18 +569,54 @@ async function displayPortResults(host, data) {
             if (processData.status === 'success') {
                 processInfo = processData.data || {};
                 isLocalHost = !processData.note; // noteがない場合はローカルホスト
+                processInfoStatus = isLocalHost ? 'available' : 'remote';
             }
         }
     } catch (error) {
         console.error('プロセス情報取得エラー:', error);
+        processInfoStatus = 'error';
     }
 
-    // リモートホストの場合の注記
-    if (!isLocalHost && Object.keys(processInfo).length === 0) {
-        html += `<div style="background: #fff3cd; padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-size: 0.85rem; color: #856404;">
-            ℹ️ プロセス情報はローカルマシンのポートのみ表示されます
+    // スキャン結果セクションを作成
+    const resultSection = document.createElement('div');
+    resultSection.id = `${stage}-results-${host.replace(/\./g, '-')}`;
+    resultSection.style.cssText = stage === 'priority' ? 'margin-bottom: 10px;' : 'margin-top: 20px;';
+
+    let html = '';
+
+    // スキャンステージ表示
+    const stageText = stage === 'priority' ? '優先ポートスキャン結果' : '全ポートスキャン結果';
+    const stageBadgeColor = stage === 'priority' ? '#fbbf24' : '#10b981';
+    html += `<div style="background: ${stageBadgeColor}22; color: ${stageBadgeColor}; padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-weight: 600; display: inline-block;">
+        ${stageText}
+    </div>`;
+
+    // OS情報（全ポートスキャン時のみ表示）
+    if (stage === 'full' && data.os) {
+        html += `<div style="background: #f7fafc; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+            <strong>🖥️ OS:</strong> ${data.os}
         </div>`;
     }
+
+    // プロセス情報取得状況をチェックボックスで表示
+    html += `<div style="background: #f0f4f8; padding: 10px; border-radius: 6px; margin-bottom: 10px; font-size: 0.9rem;">
+        <div style="margin-bottom: 5px;">
+            <input type="checkbox" checked disabled> ポートスキャン完了
+        </div>
+        <div style="margin-bottom: 5px;">
+            <input type="checkbox" ${processInfoStatus !== 'loading' ? 'checked' : ''} disabled> プロセス情報取得${processInfoStatus === 'loading' ? '中...' : '完了'}
+        </div>
+        ${processInfoStatus === 'remote' ? `
+            <div style="margin-top: 8px; padding: 8px; background: #fff3cd; border-radius: 4px; font-size: 0.85rem; color: #856404;">
+                ℹ️ リモートホストのためプロセス情報は取得できません
+            </div>
+        ` : ''}
+        ${processInfoStatus === 'available' ? `
+            <div style="margin-top: 8px; padding: 8px; background: #d1fae5; border-radius: 4px; font-size: 0.85rem; color: #065f46;">
+                ✓ ローカルホストのプロセス情報を表示します
+            </div>
+        ` : ''}
+    </div>`;
 
     // ポートリスト
     data.ports.forEach(port => {
@@ -577,7 +655,20 @@ async function displayPortResults(host, data) {
         `;
     });
 
-    portsDiv.innerHTML = html;
+    resultSection.innerHTML = html;
+
+    // 優先ポートの場合は追加、全ポートの場合は全ポート進捗エリアを置き換え
+    if (stage === 'priority') {
+        portsDiv.innerHTML = '';
+        portsDiv.appendChild(resultSection);
+    } else {
+        // 全ポートスキャン進捗エリアを削除して結果を表示
+        const fullScanArea = document.getElementById(`full-scan-area-${host.replace(/\./g, '-')}`);
+        if (fullScanArea) {
+            fullScanArea.remove();
+        }
+        portsDiv.appendChild(resultSection);
+    }
 }
 
 // プロセスをKILL
