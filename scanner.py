@@ -344,7 +344,7 @@ class NetworkScanner:
             return result
 
         # 優先ポートの定義
-        priority_ports = [80, 8080, 5000, 5001, 5050, 3000, 30001]
+        priority_ports = [80, 8080, 5000, 5001, 5050, 3000, 3001]
 
         try:
             import time
