@@ -318,7 +318,7 @@ class NetworkScanner:
             if os.path.exists(output_file):
                 os.remove(output_file)
 
-    def port_scan(self, host: str, arguments: str = '-sS -sV', priority_only: bool = False, is_range_scan: bool = False) -> Dict:
+    def port_scan(self, host: str, arguments: str = '-sS -sV', priority_only: bool = False, is_range_scan: bool = False, verbose: bool = True) -> Dict:
         """
         指定されたホストに対して詳細ポートスキャンを実行
 
@@ -326,6 +326,8 @@ class NetworkScanner:
             host: スキャン対象のIPアドレス
             arguments: nmapの引数（デフォルト: '-sS -sV'）
             priority_only: Trueの場合、優先ポートのみスキャン
+            is_range_scan: 範囲スキャンの場合True
+            verbose: 詳細なログ出力（デフォルト: True）
 
         Returns:
             Dict: ポートスキャン結果
@@ -350,21 +352,29 @@ class NetworkScanner:
             import time
             start_time = time.time()
 
-            print(f"\n{'='*60}")
-            print(f"ポートスキャン開始: {host}")
+            # verboseモードでのみ詳細を表示
+            if verbose:
+                print(f"\n{'='*60}")
+                print(f"ポートスキャン開始: {host}")
+
             if priority_only:
-                print(f"スキャンタイプ: 優先ポート ({','.join(map(str, priority_ports))})")
+                if verbose:
+                    print(f"スキャンタイプ: 優先ポート ({','.join(map(str, priority_ports))})")
                 # 優先ポートのみスキャン
                 ports_str = ','.join(map(str, priority_ports))
                 scan_args = f"-p {ports_str} {arguments}"
             elif is_range_scan:
                 # 範囲スキャンの場合は引数にすでに-pとタイミングオプションが含まれている
-                print(f"スキャンタイプ: {arguments}")
+                if verbose:
+                    print(f"スキャンタイプ: {arguments}")
                 scan_args = arguments
             else:
-                print(f"スキャンタイプ: {arguments}")
+                if verbose:
+                    print(f"スキャンタイプ: {arguments}")
                 scan_args = arguments
-            print(f"{'='*60}")
+
+            if verbose:
+                print(f"{'='*60}")
 
             # root権限が必要なスキャンかチェック
             needs_root = '-sS' in scan_args or '-sU' in scan_args or '-O' in scan_args
@@ -376,8 +386,8 @@ class NetworkScanner:
                 result['ports'] = sudo_result['ports']
                 result['os'] = sudo_result['os']
 
-                # 結果を表示
-                if result['ports']:
+                # 結果を表示（verboseモードのみ）
+                if verbose and result['ports']:
                     print("\n検出されたポート:")
                     for port_info in result['ports']:
                         service = port_info.get('service', 'unknown')
@@ -386,7 +396,7 @@ class NetworkScanner:
                         version_str = f"{product} {version}".strip() if product or version else ""
                         print(f"  ✓ {port_info['port']}/{port_info['protocol']:3s} - {service:15s} {version_str}")
 
-                if result['os']:
+                if verbose and result['os']:
                     print(f"\nOS検出: {result['os']}")
 
             else:

@@ -596,15 +596,15 @@ function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
             html = `
                 <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
                 <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
-                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🚀 ポートスキャン実行中... ${estimatedProgress}%</div>
-                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> サービス情報取得待機中...</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🚀 ポートスキャン実行中 (6スレッド並列)... ${estimatedProgress}%</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> サービス情報取得待機中 (6スレッド並列)...</div>
             `;
         } else {
             html = `
                 <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
                 <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
-                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ✅ ポートスキャン完了</div>
-                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🔍 サービス情報取得中... ${estimatedProgress}%</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ✅ ポートスキャン完了 (6スレッド並列)</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🔍 サービス情報取得中 (6スレッド並列)... ${estimatedProgress}%</div>
             `;
         }
 
