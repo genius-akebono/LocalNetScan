@@ -325,16 +325,8 @@ async function executePortScan() {
     // モーダルを閉じる
     closePortScanConfig();
 
-    // スキャン中の表示（進捗チェックリスト）
-    const portsDiv = document.getElementById(`ports-${targetHost.replace(/\./g, '-')}`);
-    portsDiv.innerHTML = `
-        <div style="background: #f7fafc; padding: 15px; border-radius: 8px;">
-            <h4 style="margin: 0 0 10px 0; color: #4a5568;">スキャン進捗</h4>
-            <div id="scan-progress-${targetHost.replace(/\./g, '-')}" style="font-size: 0.9rem;">
-                <div><input type="checkbox" disabled> スキャン開始中...</div>
-            </div>
-        </div>
-    `;
+    // タブUIを作成（初期表示から優先ポート・全ポートのタブを表示）
+    createPortScanTabs(targetHost);
 
     try {
         const response = await fetch(`/api/port-scan/${targetHost}`, {
@@ -351,18 +343,21 @@ async function executePortScan() {
 
         if (data.status === 'success') {
             showNotification(data.message, 'success');
-            // 進捗を更新
-            updateScanProgress(targetHost, 'started', scanCommand);
+            // タブ内の進捗を更新
+            updateTabProgress(targetHost, 'priority', 'started');
+            updateTabProgress(targetHost, 'full', 'started');
             // ポーリングを開始して結果を取得
             pollPortScanResults(targetHost);
         } else {
             showNotification('ポートスキャンに失敗しました: ' + data.message, 'error');
-            portsDiv.innerHTML = '<p style="color: #f56565; font-size: 0.9rem;">スキャンに失敗しました</p>';
+            updateTabProgress(targetHost, 'priority', 'error');
+            updateTabProgress(targetHost, 'full', 'error');
         }
     } catch (error) {
         console.error('ポートスキャンエラー:', error);
         showNotification('ポートスキャンに失敗しました', 'error');
-        portsDiv.innerHTML = '<p style="color: #f56565; font-size: 0.9rem;">スキャンに失敗しました</p>';
+        updateTabProgress(targetHost, 'priority', 'error');
+        updateTabProgress(targetHost, 'full', 'error');
     }
 }
 
@@ -405,7 +400,167 @@ function updateScanProgress(host, stage, command = '') {
     progressDiv.innerHTML = html;
 }
 
-// ポートスキャン結果をポーリング（並列スキャン対応）
+// タブUIを作成（優先ポート・全ポートのタブを初期表示）
+function createPortScanTabs(host) {
+    const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
+    const hostKey = host.replace(/\./g, '-');
+
+    portsDiv.innerHTML = `
+        <div class="port-scan-tabs" style="margin-top: 15px;">
+            <!-- タブヘッダー -->
+            <div class="tab-headers" style="display: flex; border-bottom: 2px solid #e2e8f0; margin-bottom: 15px;">
+                <button class="tab-btn"
+                        data-tab="priority"
+                        onclick="switchTab('${host}', 'priority')"
+                        style="flex: 1; padding: 12px 20px; background: #667eea; color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; font-size: 0.95rem; transition: all 0.3s; margin-right: 5px;">
+                    📌 優先ポート
+                </button>
+                <button class="tab-btn"
+                        data-tab="full"
+                        onclick="switchTab('${host}', 'full')"
+                        style="flex: 1; padding: 12px 20px; background: #cbd5e0; color: #4a5568; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; font-size: 0.95rem; transition: all 0.3s;">
+                    🔍 全ポート (1-65535)
+                </button>
+            </div>
+
+            <!-- タブコンテンツ -->
+            <div class="tab-contents">
+                <!-- 優先ポートタブ -->
+                <div id="priority-tab-${hostKey}" class="tab-content" style="display: block;">
+                    <div style="background: #f7fafc; padding: 15px; border-radius: 8px;">
+                        <h4 style="margin: 0 0 10px 0; color: #4a5568;">📌 優先ポートスキャン進捗</h4>
+                        <div id="priority-progress-${hostKey}" style="font-size: 0.9rem;">
+                            <div><input type="checkbox" disabled> スキャン待機中...</div>
+                        </div>
+                    </div>
+                    <div id="priority-results-${hostKey}" style="margin-top: 15px;"></div>
+                </div>
+
+                <!-- 全ポートタブ -->
+                <div id="full-tab-${hostKey}" class="tab-content" style="display: none;">
+                    <div style="background: #f7fafc; padding: 15px; border-radius: 8px;">
+                        <h4 style="margin: 0 0 10px 0; color: #4a5568;">🔍 全ポートスキャン進捗</h4>
+                        <div id="full-progress-${hostKey}" style="font-size: 0.9rem;">
+                            <div><input type="checkbox" disabled> スキャン待機中...</div>
+                        </div>
+                        <div id="full-scan-progress-bar-container-${hostKey}" style="display: none; margin-top: 15px;">
+                            <div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden;">
+                                <div id="full-scan-progress-bar-${hostKey}"
+                                     style="width: 0%; background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; transition: width 0.3s;"></div>
+                            </div>
+                            <div id="full-scan-progress-text-${hostKey}" style="margin-top: 8px; color: #718096; font-size: 0.85rem;">
+                                🚀 高速並列スキャン実行中...
+                            </div>
+                        </div>
+                    </div>
+                    <div id="full-results-${hostKey}" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// タブを切り替え
+function switchTab(host, tabName) {
+    const hostKey = host.replace(/\./g, '-');
+
+    // 全てのタブボタンのスタイルをリセット
+    const tabButtons = document.querySelectorAll(`#ports-${hostKey} .tab-btn`);
+    tabButtons.forEach(btn => {
+        if (btn.dataset.tab === tabName) {
+            btn.style.background = '#667eea';
+            btn.style.color = 'white';
+        } else {
+            btn.style.background = '#cbd5e0';
+            btn.style.color = '#4a5568';
+        }
+    });
+
+    // タブコンテンツの表示切り替え
+    document.getElementById(`priority-tab-${hostKey}`).style.display =
+        tabName === 'priority' ? 'block' : 'none';
+    document.getElementById(`full-tab-${hostKey}`).style.display =
+        tabName === 'full' ? 'block' : 'none';
+}
+
+// タブ内の進捗を更新
+function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
+    const hostKey = host.replace(/\./g, '-');
+    const progressDiv = document.getElementById(`${tabName}-progress-${hostKey}`);
+    if (!progressDiv) return;
+
+    let html = '';
+
+    if (stage === 'started') {
+        html = `
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" disabled> コマンド実行中...</div>
+        `;
+    } else if (stage === 'detecting') {
+        html = `
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" disabled> ポート検出中...</div>
+        `;
+    } else if (stage === 'analyzing') {
+        html = `
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ポート検出完了</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" disabled> サービス情報取得中...</div>
+        `;
+    } else if (stage === 'complete') {
+        html = `
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ポート検出完了</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> サービス情報取得完了</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> 結果の解析完了</div>
+        `;
+    } else if (stage === 'error') {
+        html = `
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+            <div style="margin-bottom: 5px; color: #f56565;"><input type="checkbox" disabled> ❌ スキャン失敗</div>
+        `;
+    } else if (stage === 'scanning') {
+        // 全ポートスキャン実行中（進捗％付き）
+        let estimatedProgress = 0;
+        if (elapsedSeconds <= 10) {
+            estimatedProgress = Math.min(30, (elapsedSeconds / 10) * 30);
+        } else if (elapsedSeconds <= 20) {
+            estimatedProgress = 30 + ((elapsedSeconds - 10) / 10) * 40;
+        } else if (elapsedSeconds <= 30) {
+            estimatedProgress = 70 + ((elapsedSeconds - 20) / 10) * 25;
+        } else {
+            estimatedProgress = Math.min(98, 95 + ((elapsedSeconds - 30) / 10) * 3);
+        }
+        estimatedProgress = Math.round(estimatedProgress);
+
+        html = `
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
+            <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🚀 並列スキャン実行中... ${estimatedProgress}%</div>
+        `;
+
+        // プログレスバーを表示
+        const progressBarContainer = document.getElementById(`${tabName}-scan-progress-bar-container-${hostKey}`);
+        if (progressBarContainer) {
+            progressBarContainer.style.display = 'block';
+            const progressBar = document.getElementById(`${tabName}-scan-progress-bar-${hostKey}`);
+            const progressText = document.getElementById(`${tabName}-scan-progress-text-${hostKey}`);
+            if (progressBar) {
+                progressBar.style.width = `${estimatedProgress}%`;
+            }
+            if (progressText) {
+                progressText.textContent = `🚀 高速並列スキャン実行中（3スレッド）| 経過時間: ${elapsedSeconds}秒 | ${estimatedProgress}%`;
+            }
+        }
+    }
+
+    progressDiv.innerHTML = html;
+}
+
+// ポートスキャン結果をポーリング（並列スキャン対応・タブUI版）
 async function pollPortScanResults(host) {
     const maxAttempts = 300; // 最大5分間ポーリング
     let attempts = 0;
@@ -418,9 +573,10 @@ async function pollPortScanResults(host) {
 
         // 進捗ステージを更新（時間経過に基づく）
         if (attempts === 2) {
-            updateScanProgress(host, 'detecting');
+            updateTabProgress(host, 'priority', 'detecting');
+            updateTabProgress(host, 'full', 'detecting');
         } else if (attempts === 5) {
-            updateScanProgress(host, 'analyzing');
+            updateTabProgress(host, 'priority', 'analyzing');
         }
 
         try {
@@ -434,17 +590,15 @@ async function pollPortScanResults(host) {
                 // 優先ポートスキャン結果が来た場合
                 if (currentStage === 'priority' && !priorityDisplayed && currentPorts.length > 0) {
                     priorityDisplayed = true;
-                    updateScanProgress(host, 'analyzing');
-                    displayPortResults(host, data.data, 'priority');
-                    // 全ポートスキャン進捗表示エリアを作成
                     fullScanStartTime = attempts;
-                    createFullScanProgressArea(host);
+                    updateTabProgress(host, 'priority', 'complete');
+                    displayPortResults(host, data.data, 'priority');
                 }
 
                 // 全ポートスキャン結果が来た場合
                 if (currentStage === 'full' && !fullDisplayed) {
                     fullDisplayed = true;
-                    updateScanProgress(host, 'complete');
+                    updateTabProgress(host, 'full', 'complete');
                     displayPortResults(host, data.data, 'full');
                     clearInterval(pollInterval);
                 }
@@ -453,122 +607,37 @@ async function pollPortScanResults(host) {
                 if (priorityDisplayed && !fullDisplayed && fullScanStartTime) {
                     const elapsedSinceFullStart = attempts - fullScanStartTime;
                     // 並列スキャンは早いので、より積極的に進捗を表示
-                    updateFullScanProgress(host, elapsedSinceFullStart, true);
+                    updateTabProgress(host, 'full', 'scanning', elapsedSinceFullStart);
                 }
             } else if (attempts >= maxAttempts) {
                 // タイムアウト
-                const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
-                portsDiv.innerHTML = '<p style="color: #f56565; font-size: 0.9rem;">スキャンがタイムアウトしました（5分経過）</p>';
+                updateTabProgress(host, 'priority', 'error');
+                updateTabProgress(host, 'full', 'error');
                 clearInterval(pollInterval);
             }
         } catch (error) {
             console.error('結果取得エラー:', error);
             if (attempts >= maxAttempts) {
-                const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
-                portsDiv.innerHTML = '<p style="color: #f56565; font-size: 0.9rem;">スキャンがタイムアウトしました</p>';
+                updateTabProgress(host, 'priority', 'error');
+                updateTabProgress(host, 'full', 'error');
                 clearInterval(pollInterval);
             }
         }
     }, 1000); // 1秒ごとにチェック
 }
 
-// 全ポートスキャン進捗表示エリアを作成
-function createFullScanProgressArea(host) {
-    const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
+// ポート結果を表示（タブUI版・優先ポートと全ポートを各タブ内に表示）
+async function displayPortResults(host, data, stage = 'full') {
+    const hostKey = host.replace(/\./g, '-');
+    const resultsDiv = document.getElementById(`${stage}-results-${hostKey}`);
 
-    const fullScanArea = document.createElement('div');
-    fullScanArea.id = `full-scan-area-${host.replace(/\./g, '-')}`;
-    fullScanArea.style.cssText = 'margin-top: 20px; padding: 15px; background: #f7fafc; border-radius: 8px; border-left: 4px solid #667eea;';
-    fullScanArea.innerHTML = `
-        <h4 style="margin: 0 0 10px 0; color: #4a5568; display: flex; align-items: center;">
-            <span style="margin-right: 8px;">🚀</span>
-            全ポート並列スキャン実行中（3スレッド）
-        </h4>
-        <div id="full-scan-progress-${host.replace(/\./g, '-')}" style="font-size: 0.9rem;">
-            <div style="margin-bottom: 8px;">
-                <input type="checkbox" checked disabled> 優先ポートスキャン完了
-            </div>
-            <div style="margin-bottom: 8px;">
-                <input type="checkbox" disabled> 全ポート並列スキャン中（3スレッド）... 0%
-            </div>
-            <div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; margin-top: 10px; overflow: hidden;">
-                <div id="full-scan-progress-bar-${host.replace(/\./g, '-')}"
-                     style="width: 0%; background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; transition: width 0.3s;"></div>
-            </div>
-            <div style="margin-top: 8px; color: #718096; font-size: 0.85rem;">
-                🚀 高速並列スキャン（範囲分割）で約30-40秒で完了
-            </div>
-        </div>
-    `;
-
-    portsDiv.appendChild(fullScanArea);
-}
-
-// 全ポートスキャンの進捗％を更新
-function updateFullScanProgress(host, elapsedSeconds, isParallel = false) {
-    const progressText = document.getElementById(`full-scan-progress-${host.replace(/\./g, '-')}`);
-    const progressBar = document.getElementById(`full-scan-progress-bar-${host.replace(/\./g, '-')}`);
-
-    if (!progressText || !progressBar) return;
-
-    let estimatedProgress = 0;
-
-    if (isParallel) {
-        // 並列スキャン（3スレッド）の場合、約30-40秒で完了すると推定
-        if (elapsedSeconds <= 10) {
-            estimatedProgress = Math.min(30, (elapsedSeconds / 10) * 30);
-        } else if (elapsedSeconds <= 20) {
-            estimatedProgress = 30 + ((elapsedSeconds - 10) / 10) * 40;
-        } else if (elapsedSeconds <= 30) {
-            estimatedProgress = 70 + ((elapsedSeconds - 20) / 10) * 25;
-        } else {
-            estimatedProgress = Math.min(98, 95 + ((elapsedSeconds - 30) / 10) * 3);
-        }
-    } else {
-        // 通常スキャンは80-120秒かかる
-        if (elapsedSeconds <= 30) {
-            estimatedProgress = Math.min(50, (elapsedSeconds / 30) * 50);
-        } else if (elapsedSeconds <= 60) {
-            estimatedProgress = 50 + ((elapsedSeconds - 30) / 30) * 30;
-        } else if (elapsedSeconds <= 90) {
-            estimatedProgress = 80 + ((elapsedSeconds - 60) / 30) * 15;
-        } else {
-            estimatedProgress = Math.min(98, 95 + ((elapsedSeconds - 90) / 30) * 3);
-        }
+    if (!resultsDiv) {
+        console.error(`結果表示エリアが見つかりません: ${stage}-results-${hostKey}`);
+        return;
     }
 
-    estimatedProgress = Math.round(estimatedProgress);
-
-    const statusText = isParallel ? '全ポート並列スキャン中（3スレッド）' : '全ポート（1-65535）スキャン中';
-
-    progressText.innerHTML = `
-        <div style="margin-bottom: 8px;">
-            <input type="checkbox" checked disabled> 優先ポートスキャン完了
-        </div>
-        <div style="margin-bottom: 8px;">
-            <input type="checkbox" disabled> ${statusText}... ${estimatedProgress}%
-        </div>
-        <div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; margin-top: 10px; overflow: hidden;">
-            <div id="full-scan-progress-bar-${host.replace(/\./g, '-')}"
-                 style="width: ${estimatedProgress}%; background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; transition: width 0.3s;"></div>
-        </div>
-        <div style="margin-top: 8px; color: #718096; font-size: 0.85rem;">
-            ${isParallel ? '🚀 高速並列スキャン実行中 | ' : '⏱️ '}経過時間: ${elapsedSeconds}秒
-        </div>
-    `;
-}
-
-// ポート結果を表示（優先ポートと全ポートを別々に表示）
-async function displayPortResults(host, data, stage = 'full') {
-    const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
-
     if (!data || !data.ports || data.ports.length === 0) {
-        if (stage === 'priority') {
-            // 優先ポートで何も見つからなかった場合
-            portsDiv.innerHTML = '<p style="color: #999; font-size: 0.9rem;">優先ポートでは開いているポートが見つかりませんでした</p>';
-        } else {
-            portsDiv.innerHTML = '<p style="color: #999; font-size: 0.9rem;">開いているポートが見つかりませんでした</p>';
-        }
+        resultsDiv.innerHTML = '<p style="color: #999; font-size: 0.9rem; padding: 10px; background: #f7fafc; border-radius: 6px;">開いているポートが見つかりませんでした</p>';
         return;
     }
 
@@ -591,51 +660,20 @@ async function displayPortResults(host, data, stage = 'full') {
         processInfoStatus = 'error';
     }
 
-    // スキャン結果セクションを作成
-    const resultSection = document.createElement('div');
-    resultSection.id = `${stage}-results-${host.replace(/\./g, '-')}`;
-    resultSection.style.cssText = stage === 'priority' ? 'margin-bottom: 20px;' : 'margin-top: 20px;';
-
     let html = '';
-
-    // スキャンステージ表示
-    const stageText = stage === 'priority' ? '優先ポートスキャン' : '全ポートスキャン';
-    const stageBadgeColor = stage === 'priority' ? '#fbbf24' : '#10b981';
-    html += `<div style="background: ${stageBadgeColor}22; color: ${stageBadgeColor}; padding: 8px 12px; border-radius: 6px; margin-bottom: 15px; font-weight: 600; display: inline-block;">
-        ${stageText}
-    </div>`;
-
-    // スキャン進捗チェックボックス（優先/全スキャン両方で表示）
-    html += `<div style="background: #f0f4f8; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 0.9rem;">
-        <h4 style="margin: 0 0 10px 0; color: #4a5568; font-size: 0.95rem;">スキャン進捗</h4>
-        <div style="margin-bottom: 5px;">
-            <input type="checkbox" checked disabled> スキャン開始
-        </div>
-        <div style="margin-bottom: 5px;">
-            <input type="checkbox" checked disabled> コマンド実行完了
-        </div>
-        <div style="margin-bottom: 5px;">
-            <input type="checkbox" checked disabled> ポート検出完了
-        </div>
-        <div style="margin-bottom: 5px;">
-            <input type="checkbox" checked disabled> サービス情報取得完了
-        </div>
-        ${isLocalHost ? `
-            <div style="margin-bottom: 5px;">
-                <input type="checkbox" ${processInfoStatus === 'available' ? 'checked' : ''} disabled> プロセス情報取得完了
-            </div>
-        ` : ''}
-    </div>`;
 
     // OS情報（全ポートスキャン時のみ表示）
     if (stage === 'full' && data.os) {
-        html += `<div style="background: #f7fafc; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+        html += `<div style="background: #f7fafc; padding: 10px; border-radius: 6px; margin-bottom: 15px;">
             <strong>🖥️ OS:</strong> ${data.os}
         </div>`;
     }
 
-    // ポートリスト見出し
-    html += `<h4 style="margin: 15px 0 10px 0; color: #4a5568; font-size: 0.95rem;">検出されたポート</h4>`;
+    // 検出されたポート数を表示
+    const openPorts = data.ports.filter(p => p.state === 'open').length;
+    html += `<div style="background: #e6fffa; color: #234e52; padding: 10px; border-radius: 6px; margin-bottom: 15px; font-weight: 600;">
+        ✅ ${openPorts}個の開いているポートを検出しました
+    </div>`;
 
     // ポートリスト
     data.ports.forEach(port => {
@@ -645,17 +683,17 @@ async function displayPortResults(host, data, stage = 'full') {
         const process = processInfo[portKey];
 
         html += `
-            <div class="port-item ${stateClass}">
+            <div class="port-item ${stateClass}" style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 3px solid ${port.state === 'open' ? '#48bb78' : '#cbd5e0'};">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div style="flex: 1;">
                         <div>
-                            <span class="port-number">${port.port}/${port.protocol}</span>
-                            <span class="port-service">${port.service || 'unknown'}</span>
+                            <span class="port-number" style="font-weight: 700; color: #2d3748; font-size: 1rem;">${port.port}/${port.protocol}</span>
+                            <span class="port-service" style="color: #4a5568; margin-left: 10px; background: #edf2f7; padding: 3px 8px; border-radius: 4px; font-size: 0.85rem;">${port.service || 'unknown'}</span>
                             ${port.state !== 'open' ? `<span style="color: #f56565; font-size: 0.85rem; margin-left: 8px;">(${port.state})</span>` : ''}
                         </div>
-                        ${version ? `<div style="color: #666; font-size: 0.85rem; margin-top: 3px;">📦 ${version}</div>` : ''}
+                        ${version ? `<div style="color: #666; font-size: 0.85rem; margin-top: 5px;">📦 ${version}</div>` : ''}
                         ${process ? `
-                            <div style="margin-top: 5px; font-size: 0.85rem; color: #4a5568; background: #f7fafc; padding: 5px 8px; border-radius: 4px; display: inline-block;">
+                            <div style="margin-top: 8px; font-size: 0.85rem; color: #4a5568; background: #f7fafc; padding: 6px 10px; border-radius: 4px; display: inline-block;">
                                 <strong>PID:</strong> ${process.pid} |
                                 <strong>プロセス:</strong> ${process.name || 'unknown'}
                             </div>
@@ -663,9 +701,9 @@ async function displayPortResults(host, data, stage = 'full') {
                     </div>
                     ${process && process.pid ? `
                         <button class="btn-kill" onclick="killProcess(${process.pid}, '${host}', ${port.port})"
-                                style="padding: 6px 14px; background: #f56565; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: background 0.2s; margin-left: 10px;"
-                                onmouseover="this.style.background='#e53e3e'"
-                                onmouseout="this.style.background='#f56565'">
+                                style="padding: 8px 16px; background: #f56565; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: all 0.2s; margin-left: 15px; box-shadow: 0 2px 4px rgba(245, 101, 101, 0.3);"
+                                onmouseover="this.style.background='#e53e3e'; this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 6px rgba(245, 101, 101, 0.4)';"
+                                onmouseout="this.style.background='#f56565'; this.style.transform=''; this.style.boxShadow='0 2px 4px rgba(245, 101, 101, 0.3)';">
                             ⚠️ KILL
                         </button>
                     ` : ''}
@@ -674,19 +712,16 @@ async function displayPortResults(host, data, stage = 'full') {
         `;
     });
 
-    resultSection.innerHTML = html;
+    resultsDiv.innerHTML = html;
 
-    // 優先ポートの場合は追加、全ポートの場合は全ポート進捗エリアを置き換え
-    if (stage === 'priority') {
-        portsDiv.innerHTML = '';
-        portsDiv.appendChild(resultSection);
-    } else {
-        // 全ポートスキャン進捗エリアを削除して結果を表示
-        const fullScanArea = document.getElementById(`full-scan-area-${host.replace(/\./g, '-')}`);
-        if (fullScanArea) {
-            fullScanArea.remove();
+    // プロセス情報取得完了のチェックボックスを更新（ローカルホストの場合のみ）
+    if (isLocalHost && processInfoStatus === 'available') {
+        const progressDiv = document.getElementById(`${stage}-progress-${hostKey}`);
+        if (progressDiv) {
+            progressDiv.innerHTML += `
+                <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> プロセス情報取得完了</div>
+            `;
         }
-        portsDiv.appendChild(resultSection);
     }
 }
 
