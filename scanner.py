@@ -356,14 +356,14 @@ class NetworkScanner:
                 print(f"スキャンタイプ: 優先ポート ({','.join(map(str, priority_ports))})")
                 # 優先ポートのみスキャン
                 ports_str = ','.join(map(str, priority_ports))
-                scan_args = f"-p {ports_str} -T4 {arguments}"
+                scan_args = f"-p {ports_str} {arguments}"
             elif is_range_scan:
-                # 範囲スキャンの場合は引数にすでに-pが含まれている
+                # 範囲スキャンの場合は引数にすでに-pとタイミングオプションが含まれている
                 print(f"スキャンタイプ: {arguments}")
-                scan_args = f"-T4 {arguments}"
+                scan_args = arguments
             else:
                 print(f"スキャンタイプ: {arguments}")
-                scan_args = f"-T4 {arguments}"
+                scan_args = arguments
             print(f"{'='*60}")
 
             # root権限が必要なスキャンかチェック

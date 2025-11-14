@@ -195,9 +195,13 @@ def start_port_scan(host):
             print(f"\n優先ポートスキャンエラー ({host}): {e}\n")
 
     def scan_full_ports():
-        """全ポートスキャンを並列実行（範囲分割 + 2段階スキャン）"""
+        """全ポートスキャンを並列実行（2段階: ポート検出→サービス情報取得）"""
         try:
-            print(f"\n[並列スキャン] {host} の全ポートをスキャン中（範囲分割・6スレッド）...")
+            print(f"\n{'='*60}")
+            print(f"[2段階スキャン開始] {host}")
+            print(f"第1段階: ポート検出（6スレッド並列）")
+            print(f"第2段階: サービス情報取得（発見したポートのみ）")
+            print(f"{'='*60}")
 
             # 全ポートを6つの範囲に分割して並列スキャン
             port_ranges = [
@@ -209,41 +213,30 @@ def start_port_scan(host):
                 (54611, 65535)
             ]
 
-            results = []
+            # ===== 第1段階: ポート検出（全範囲を並列スキャン） =====
+            print(f"\n[第1段階] ポート検出開始...")
+            port_results = []
             threads = []
 
-            def scan_range(start, end):
-                """指定範囲をスキャン（2段階: ポートスキャン→サービス情報取得）"""
+            def scan_ports_only(start, end):
+                """指定範囲のポートを検出（サービス情報なし）"""
                 try:
-                    # 第1段階: 高速ポートスキャン（ポートのみ検出）
                     print(f"  [範囲 {start}-{end}] ポートスキャン中...")
+                    # -sT: TCP接続スキャン, -T5: 最速, --open: オープンポートのみ, -sVなし
                     range_args = f"-p {start}-{end} -sT -T5 --open"
                     result = scanner.port_scan(host, range_args, priority_only=False, is_range_scan=True)
 
-                    # 発見したポートがあれば、サービス情報を取得
                     if result.get('ports') and len(result['ports']) > 0:
-                        open_ports = [str(p['port']) for p in result['ports']]
-                        print(f"  [範囲 {start}-{end}] {len(open_ports)}個のポートを発見、サービス情報取得中...")
-
-                        # 第2段階: 発見したポートのみサービス情報取得
-                        ports_str = ','.join(open_ports)
-                        service_args = f"-p {ports_str} -sV -T5"
-                        service_result = scanner.port_scan(host, service_args, priority_only=False, is_range_scan=True)
-
-                        # サービス情報をマージ
-                        if service_result.get('ports'):
-                            results.append(service_result)
-                        else:
-                            results.append(result)
+                        print(f"  [範囲 {start}-{end}] ✓ {len(result['ports'])}個のポートを発見")
+                        port_results.append(result)
                     else:
                         print(f"  [範囲 {start}-{end}] ポートなし")
-
                 except Exception as e:
-                    print(f"範囲 {start}-{end} のスキャンエラー: {e}")
+                    print(f"  [範囲 {start}-{end}] エラー: {e}")
 
-            # 各範囲を別スレッドでスキャン
+            # ポート検出を並列実行
             for start, end in port_ranges:
-                thread = threading.Thread(target=scan_range, args=(start, end))
+                thread = threading.Thread(target=scan_ports_only, args=(start, end))
                 thread.daemon = True
                 thread.start()
                 threads.append(thread)
@@ -252,26 +245,59 @@ def start_port_scan(host):
             for thread in threads:
                 thread.join()
 
-            # 結果をマージ
-            merged_result = {
-                'host': host,
-                'ports': [],
-                'os': '',
-                'scan_time': '',
-                'scan_stage': 'full'
-            }
+            print(f"\n[第1段階完了] ポート検出が完了しました")
 
-            for result in results:
+            # 発見したポートを収集
+            all_open_ports = []
+            for result in port_results:
                 if 'ports' in result:
-                    merged_result['ports'].extend(result['ports'])
-                if result.get('os'):
-                    merged_result['os'] = result['os']
+                    all_open_ports.extend(result['ports'])
+
+            # ===== 第2段階: サービス情報取得 =====
+            if len(all_open_ports) > 0:
+                print(f"\n[第2段階] サービス情報取得開始...")
+                print(f"  発見したポート数: {len(all_open_ports)}個")
+
+                # ポート番号のみ抽出
+                port_numbers = [str(p['port']) for p in all_open_ports]
+                ports_str = ','.join(port_numbers)
+
+                print(f"  対象ポート: {ports_str}")
+                print(f"  サービス情報を取得中...")
+
+                # 発見したポートのみサービス情報を取得
+                service_args = f"-p {ports_str} -sV -T5"
+                service_result = scanner.port_scan(host, service_args, priority_only=False, is_range_scan=True)
+
+                print(f"\n[第2段階完了] サービス情報取得が完了しました")
+
+                # 最終結果
+                merged_result = {
+                    'host': host,
+                    'ports': service_result.get('ports', all_open_ports),
+                    'os': service_result.get('os', ''),
+                    'scan_time': '',
+                    'scan_stage': 'full'
+                }
+            else:
+                print(f"\n[第2段階スキップ] ポートが発見されませんでした")
+                merged_result = {
+                    'host': host,
+                    'ports': [],
+                    'os': '',
+                    'scan_time': '',
+                    'scan_stage': 'full'
+                }
 
             # ポートを番号順にソート
-            merged_result['ports'].sort(key=lambda x: x['port'])
+            if merged_result['ports']:
+                merged_result['ports'].sort(key=lambda x: x['port'])
 
             port_scan_results[host] = merged_result
-            print(f"\n全ポートスキャン完了: {len(merged_result['ports'])}個のポートを検出")
+
+            print(f"\n{'='*60}")
+            print(f"[2段階スキャン完了] {len(merged_result['ports'])}個のポートを検出")
+            print(f"{'='*60}\n")
 
         except Exception as e:
             print(f"\n全ポートスキャンエラー ({host}): {e}\n")
