@@ -366,7 +366,7 @@ async function executePortScan() {
             },
             body: JSON.stringify({
                 arguments: scanCommand,
-                scan_mode: scanMode  // priority, full, both
+                scan_mode: scanMode  // priority or full
             })
         });
 
@@ -375,30 +375,27 @@ async function executePortScan() {
         if (data.status === 'success') {
             showNotification(data.message, 'success');
             // タブ内の進捗を更新（モードに応じて）
-            if (scanMode === 'priority' || scanMode === 'both') {
+            if (scanMode === 'priority') {
                 updateTabProgress(targetHost, 'priority', 'started');
-            }
-            if (scanMode === 'full' || scanMode === 'both') {
+            } else if (scanMode === 'full') {
                 updateTabProgress(targetHost, 'full', 'started');
             }
             // ポーリングを開始して結果を取得（スキャンモードを渡す）
             pollPortScanResults(targetHost, scanMode);
         } else {
             showNotification('ポートスキャンに失敗しました: ' + data.message, 'error');
-            if (scanMode === 'priority' || scanMode === 'both') {
+            if (scanMode === 'priority') {
                 updateTabProgress(targetHost, 'priority', 'error');
-            }
-            if (scanMode === 'full' || scanMode === 'both') {
+            } else if (scanMode === 'full') {
                 updateTabProgress(targetHost, 'full', 'error');
             }
         }
     } catch (error) {
         console.error('ポートスキャンエラー:', error);
         showNotification('ポートスキャンに失敗しました', 'error');
-        if (scanMode === 'priority' || scanMode === 'both') {
+        if (scanMode === 'priority') {
             updateTabProgress(targetHost, 'priority', 'error');
-        }
-        if (scanMode === 'full' || scanMode === 'both') {
+        } else if (scanMode === 'full') {
             updateTabProgress(targetHost, 'full', 'error');
         }
     }
@@ -449,11 +446,11 @@ function createPortScanTabs(host, scanMode) {
     const hostKey = host.replace(/\./g, '-');
 
     // スキャンモードに応じた初期メッセージ
-    const priorityInitialMessage = (scanMode === 'priority' || scanMode === 'both')
+    const priorityInitialMessage = (scanMode === 'priority')
         ? '<div><input type="checkbox" disabled> 優先ポートスキャン待機中...</div>'
         : '<div style="color: #999;">このスキャンは実行されていません。<br>再度ポートスキャンを実行してモード選択してください。</div>';
 
-    const fullInitialMessage = (scanMode === 'full' || scanMode === 'both')
+    const fullInitialMessage = (scanMode === 'full')
         ? '<div><input type="checkbox" disabled> 並列スキャン待機中（6スレッド）...</div>'
         : '<div style="color: #999;">このスキャンは実行されていません。<br>再度ポートスキャンを実行してモード選択してください。</div>';
 
@@ -687,8 +684,8 @@ async function pollPortScanResults(host, scanMode) {
     let fullScanStartTime = null;
 
     // スキャンモードに応じて待機するステージを決定
-    const waitForPriority = (scanMode === 'priority' || scanMode === 'both');
-    const waitForFull = (scanMode === 'full' || scanMode === 'both');
+    const waitForPriority = (scanMode === 'priority');
+    const waitForFull = (scanMode === 'full');
 
     const pollInterval = setInterval(async () => {
         attempts++;
