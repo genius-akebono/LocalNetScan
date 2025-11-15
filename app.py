@@ -251,8 +251,11 @@ def start_port_scan(host):
                 """指定範囲のポートを検出（サービス情報なし）"""
                 try:
                     print(f"  [範囲 {start}-{end}] ポートスキャン中...")
-                    # -sT: TCP接続スキャン, -T5: 最速, --open: オープンポートのみ, -sVなし
-                    range_args = f"-p {start}-{end} -sT -T5 --open"
+                    # -sT: TCP接続スキャン
+                    # -T4: 高速スキャン（T5より安定）
+                    # --open: オープンポートのみ
+                    # --host-timeout 30s: ホストごとのタイムアウト
+                    range_args = f"-p {start}-{end} -sT -T4 --open --host-timeout 30s"
                     print(f"  [範囲 {start}-{end}] 実行コマンド: nmap {range_args} {host} (サービス情報なし)")
                     result = scanner.port_scan(host, range_args, priority_only=False, is_range_scan=True, verbose=False)
 
