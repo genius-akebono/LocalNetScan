@@ -417,7 +417,8 @@ class NetworkScanner:
                         raise
 
                 if host in self.nm.all_hosts():
-                    print("\n検出されたポート:")
+                    if verbose:
+                        print("\n検出されたポート:")
                     # ポート情報を取得
                     for proto in self.nm[host].all_protocols():
                         ports = self.nm[host][proto].keys()
@@ -432,12 +433,13 @@ class NetworkScanner:
                                 'product': port_info.get('product', '')
                             })
 
-                            # 見つかったポートを表示
-                            service = port_info.get('name', 'unknown')
-                            version = port_info.get('version', '')
-                            product = port_info.get('product', '')
-                            version_str = f"{product} {version}".strip() if product or version else ""
-                            print(f"  ✓ {port}/{proto:3s} - {service:15s} {version_str}")
+                            # 見つかったポートを表示（verboseモードのみ）
+                            if verbose:
+                                service = port_info.get('name', 'unknown')
+                                version = port_info.get('version', '')
+                                product = port_info.get('product', '')
+                                version_str = f"{product} {version}".strip() if product or version else ""
+                                print(f"  ✓ {port}/{proto:3s} - {service:15s} {version_str}")
 
                     # OS情報（あれば）
                     if 'osmatch' in self.nm[host]:
@@ -446,11 +448,12 @@ class NetworkScanner:
                             print(f"\nOS検出: {result['os']}")
 
             elapsed_time = time.time() - start_time
-            print(f"\n{'='*60}")
-            scan_type_str = "優先" if priority_only else "全"
-            print(f"{scan_type_str}ポートスキャン完了: {len(result['ports'])}個のポートを検出")
-            print(f"所要時間: {elapsed_time:.1f}秒")
-            print(f"{'='*60}\n")
+            if verbose:
+                print(f"\n{'='*60}")
+                scan_type_str = "優先" if priority_only else "全"
+                print(f"{scan_type_str}ポートスキャン完了: {len(result['ports'])}個のポートを検出")
+                print(f"所要時間: {elapsed_time:.1f}秒")
+                print(f"{'='*60}\n")
 
         except Exception as e:
             print(f"\nポートスキャンエラー ({host}): {e}\n")
