@@ -346,6 +346,9 @@ async function executePortScan() {
         return;
     }
 
+    // スキャンモードを取得
+    const scanMode = document.querySelector('input[name="scanMode"]:checked').value;
+
     // ホストを一時変数に保存（モーダルを閉じる前に）
     const targetHost = currentScanHost;
 
@@ -362,7 +365,8 @@ async function executePortScan() {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                arguments: scanCommand
+                arguments: scanCommand,
+                scan_mode: scanMode  // priority, full, both
             })
         });
 
@@ -370,21 +374,33 @@ async function executePortScan() {
 
         if (data.status === 'success') {
             showNotification(data.message, 'success');
-            // タブ内の進捗を更新
-            updateTabProgress(targetHost, 'priority', 'started');
-            updateTabProgress(targetHost, 'full', 'started');
+            // タブ内の進捗を更新（モードに応じて）
+            if (scanMode === 'priority' || scanMode === 'both') {
+                updateTabProgress(targetHost, 'priority', 'started');
+            }
+            if (scanMode === 'full' || scanMode === 'both') {
+                updateTabProgress(targetHost, 'full', 'started');
+            }
             // ポーリングを開始して結果を取得
-            pollPortScanResults(targetHost);
+            pollPortScanResults(targetHost, scanMode);
         } else {
             showNotification('ポートスキャンに失敗しました: ' + data.message, 'error');
-            updateTabProgress(targetHost, 'priority', 'error');
-            updateTabProgress(targetHost, 'full', 'error');
+            if (scanMode === 'priority' || scanMode === 'both') {
+                updateTabProgress(targetHost, 'priority', 'error');
+            }
+            if (scanMode === 'full' || scanMode === 'both') {
+                updateTabProgress(targetHost, 'full', 'error');
+            }
         }
     } catch (error) {
         console.error('ポートスキャンエラー:', error);
         showNotification('ポートスキャンに失敗しました', 'error');
-        updateTabProgress(targetHost, 'priority', 'error');
-        updateTabProgress(targetHost, 'full', 'error');
+        if (scanMode === 'priority' || scanMode === 'both') {
+            updateTabProgress(targetHost, 'priority', 'error');
+        }
+        if (scanMode === 'full' || scanMode === 'both') {
+            updateTabProgress(targetHost, 'full', 'error');
+        }
     }
 }
 
@@ -435,18 +451,18 @@ function createPortScanTabs(host) {
     portsDiv.innerHTML = `
         <div class="port-scan-tabs" style="margin-top: 15px;">
             <!-- タブヘッダー -->
-            <div class="tab-headers" style="display: flex; border-bottom: 2px solid #e2e8f0; margin-bottom: 15px;">
+            <div class="tab-headers" style="display: flex; border-bottom: 2px solid #e2e8f0; margin-bottom: 10px;">
                 <button class="tab-btn"
                         data-tab="priority"
                         onclick="switchTab('${host}', 'priority')"
-                        style="flex: 1; padding: 12px 20px; background: #667eea; color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; font-size: 0.95rem; transition: all 0.3s; margin-right: 5px;">
+                        style="flex: 1; padding: 8px 12px; background: #667eea; color: white; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 600; font-size: 0.85rem; transition: all 0.3s; margin-right: 4px;">
                     📌 優先ポート
                 </button>
                 <button class="tab-btn"
                         data-tab="full"
                         onclick="switchTab('${host}', 'full')"
-                        style="flex: 1; padding: 12px 20px; background: #cbd5e0; color: #4a5568; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; font-size: 0.95rem; transition: all 0.3s;">
-                    🔍 全ポート (1-65535)<br><span style="font-size: 0.75rem; font-weight: 400; opacity: 0.8;">🚀 並列6スレッド</span>
+                        style="flex: 1; padding: 8px 12px; background: #cbd5e0; color: #4a5568; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 600; font-size: 0.85rem; transition: all 0.3s;">
+                    🔍 全ポート (1-65535)
                 </button>
             </div>
 
@@ -454,21 +470,21 @@ function createPortScanTabs(host) {
             <div class="tab-contents">
                 <!-- 優先ポートタブ -->
                 <div id="priority-tab-${hostKey}" class="tab-content" style="display: block;">
-                    <div style="background: #f7fafc; padding: 15px; border-radius: 8px;">
-                        <h4 style="margin: 0 0 10px 0; color: #4a5568;">📌 優先ポートスキャン進捗</h4>
-                        <div id="priority-progress-${hostKey}" style="font-size: 0.9rem;">
+                    <div style="background: #f7fafc; padding: 12px; border-radius: 6px;">
+                        <h4 style="margin: 0 0 8px 0; color: #4a5568; font-size: 0.95rem;">📌 優先ポートスキャン進捗</h4>
+                        <div id="priority-progress-${hostKey}" style="font-size: 0.85rem;">
                             <div><input type="checkbox" disabled> 優先ポートスキャン待機中...</div>
                         </div>
                     </div>
-                    <div id="priority-results-${hostKey}" style="margin-top: 15px;"></div>
+                    <div id="priority-results-${hostKey}" style="margin-top: 12px;"></div>
                 </div>
 
                 <!-- 全ポートタブ -->
                 <div id="full-tab-${hostKey}" class="tab-content" style="display: none;">
-                    <div style="background: #f7fafc; padding: 15px; border-radius: 8px;">
-                        <h4 style="margin: 0 0 10px 0; color: #4a5568;">🔍 全ポートスキャン進捗</h4>
-                        <div id="full-progress-${hostKey}" style="font-size: 0.9rem;">
-                            <div><input type="checkbox" disabled> 🚀 並列スキャン待機中（6スレッド）...</div>
+                    <div style="background: #f7fafc; padding: 12px; border-radius: 6px;">
+                        <h4 style="margin: 0 0 8px 0; color: #4a5568; font-size: 0.95rem;">🔍 全ポートスキャン進捗</h4>
+                        <div id="full-progress-${hostKey}" style="font-size: 0.85rem;">
+                            <div><input type="checkbox" disabled> 並列スキャン待機中（6スレッド）...</div>
                         </div>
                         <div id="full-scan-progress-bar-container-${hostKey}" style="display: none; margin-top: 15px;">
                             <div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden;">
