@@ -293,23 +293,29 @@ def start_port_scan(host):
 
                 # ポート番号のみ抽出してソート
                 port_numbers = sorted([p['port'] for p in all_open_ports])
+                print(f"  全ポート番号: {port_numbers}")
 
                 # ポートを6グループに分割（できるだけ均等に）
                 chunk_size = max(1, len(port_numbers) // 6)
+                print(f"  chunk_size: {chunk_size} (total: {len(port_numbers)}, threads: 6)")
                 port_chunks = []
                 for i in range(0, len(port_numbers), chunk_size):
                     chunk = port_numbers[i:i + chunk_size]
                     if chunk:
                         port_chunks.append(chunk)
+                        print(f"  追加chunk (i={i}): {chunk}")
 
                 # 最後の小さなチャンクを前のチャンクに統合（6つを超えた場合）
                 if len(port_chunks) > 6:
                     last_chunk = port_chunks.pop()
                     port_chunks[-1].extend(last_chunk)
+                    print(f"  最後のchunkを統合: {port_chunks[-1]}")
 
                 print(f"  ポートを{len(port_chunks)}グループに分割")
                 for idx, chunk in enumerate(port_chunks, 1):
-                    print(f"    グループ{idx}: {len(chunk)}ポート ({chunk[0]}-{chunk[-1]})")
+                    if len(chunk) > 0:
+                        chunk_str = f"{chunk[0]}-{chunk[-1]}" if len(chunk) > 1 else str(chunk[0])
+                        print(f"    グループ{idx}: {len(chunk)}ポート ({chunk_str}) - ポート番号: {chunk}")
 
                 # サービス情報取得を並列実行
                 service_results = []
@@ -356,16 +362,25 @@ def start_port_scan(host):
                     service_threads.append(thread)
 
                 # 全スレッドの完了を待つ
-                for thread in service_threads:
+                print(f"  [待機] {len(service_threads)}個のスレッドの完了を待機中...")
+                for idx, thread in enumerate(service_threads, 1):
                     thread.join()
+                    print(f"  [待機] スレッド{idx}/{len(service_threads)}完了")
 
                 print(f"\n[第2段階完了] サービス情報取得が完了しました")
+                print(f"  取得結果数: {len(service_results)}個")
 
                 # 結果を統合
+                print(f"\n[結果統合] service_results数: {len(service_results)}")
                 final_ports = []
-                for result in service_results:
+                for idx, result in enumerate(service_results, 1):
                     if 'ports' in result:
+                        print(f"  結果{idx}: {len(result['ports'])}ポート")
                         final_ports.extend(result['ports'])
+                    else:
+                        print(f"  結果{idx}: ポート情報なし")
+
+                print(f"  統合後の総ポート数: {len(final_ports)}")
 
                 # ポート番号順にソート
                 final_ports.sort(key=lambda x: x['port'])
@@ -378,6 +393,7 @@ def start_port_scan(host):
                     'scan_time': '',
                     'scan_stage': 'full'
                 }
+                print(f"\n[最終結果設定] scan_stage='full', ポート数: {len(merged_result['ports'])}")
             else:
                 print(f"\n[第2段階スキップ] ポートが発見されませんでした")
                 merged_result = {
@@ -389,19 +405,29 @@ def start_port_scan(host):
                 }
 
             # ポートを番号順にソート
+            print(f"\n[ソート] {len(merged_result['ports'])}個のポートをソート中...")
             if merged_result['ports']:
                 merged_result['ports'].sort(key=lambda x: x['port'])
+                print(f"  ソート完了")
 
+            print(f"\n[結果更新] port_scan_results[{host}]を更新中...")
             port_scan_results[host] = merged_result
+            print(f"  更新完了: scan_stage={merged_result['scan_stage']}")
 
             print(f"\n{'='*60}")
             print(f"[2段階スキャン完了] {len(merged_result['ports'])}個のポートを検出")
             print(f"{'='*60}\n")
 
         except Exception as e:
-            print(f"\n全ポートスキャンエラー ({host}): {e}\n")
+            import traceback
+            print(f"\n{'='*60}")
+            print(f"全ポートスキャンエラー ({host}): {e}")
+            print(f"トレースバック:")
+            print(traceback.format_exc())
+            print(f"{'='*60}\n")
             if host in port_scan_results:
                 port_scan_results[host]['error'] = str(e)
+                port_scan_results[host]['scan_stage'] = 'error'
 
     # 優先ポートと全ポートを並列実行
     priority_thread = threading.Thread(target=scan_priority_ports)
