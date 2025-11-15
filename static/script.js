@@ -511,7 +511,7 @@ function switchTab(host, tabName) {
 }
 
 // タブ内の進捗を更新
-function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
+function updateTabProgress(host, tabName, stage, progressData = null) {
     const hostKey = host.replace(/\./g, '-');
     const progressDiv = document.getElementById(`${tabName}-progress-${hostKey}`);
     if (!progressDiv) return;
@@ -572,34 +572,36 @@ function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
         `;
     } else if (stage === 'scanning') {
         // 全ポートスキャン実行中（進捗％付き）- 6スレッド、2段階スキャン
+        // progressDataから実際のスキャン数に基づく進捗を取得
         let estimatedProgress = 0;
         let scanPhase = '';
+        let detailsText = '';
 
-        // 2段階スキャン: ポートスキャン（0-50%）→ サービス情報取得（50-99%）
-        // 第1段階: 0-30秒で0→50% (ポート検出)
-        // 第2段階: 30-70秒で50→99% (サービス情報取得)
-        // 70秒以降は99%で固定（実際の完了時に100%になる）
-        if (elapsedSeconds <= 30) {
-            // ポートスキャン段階（30秒で50%）
-            estimatedProgress = Math.min(50, (elapsedSeconds / 30) * 50);
-            scanPhase = 'ポートスキャン';
-        } else if (elapsedSeconds <= 70) {
-            // サービス情報取得段階（40秒で50%→99%）
-            estimatedProgress = 50 + ((elapsedSeconds - 30) / 40) * 49;
-            scanPhase = 'サービス情報取得';
+        if (progressData && progressData.progress) {
+            const progress = progressData.progress;
+            estimatedProgress = progress.overall_progress || 0;
+
+            // 進捗率に基づいてフェーズを判定
+            if (estimatedProgress < 50) {
+                scanPhase = 'ポートスキャン';
+                detailsText = `${progress.scanned_ports.toLocaleString()}/${progress.total_ports.toLocaleString()}ポート`;
+            } else {
+                scanPhase = 'サービス情報取得';
+                detailsText = `${progress.service_scanned}/${progress.found_ports}ポート`;
+            }
         } else {
-            // 最終段階（99%で停止し、実際の完了を待つ）
-            estimatedProgress = 99;
-            scanPhase = 'サービス情報取得';
+            // フォールバック: progressDataがない場合は初期状態
+            estimatedProgress = 0;
+            scanPhase = 'ポートスキャン';
+            detailsText = '0/65,535ポート';
         }
-        estimatedProgress = Math.round(estimatedProgress);
 
         // 進捗表示を2段階に分離（ローカル/リモートで表示を変更）
         if (estimatedProgress < 50) {
             html = `
                 <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
                 <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
-                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🚀 ポートスキャン実行中 (6スレッド並列)... ${estimatedProgress}%</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🚀 ポートスキャン実行中 (6スレッド並列)... ${estimatedProgress}%<br><span style="font-size: 0.85em; color: #718096;">${detailsText}</span></div>
                 <div style="margin-bottom: 5px;"><input type="checkbox" disabled> ${isLocal ? 'サービス情報取得待機中 (6スレッド並列)...' : 'リモートスキャンの為、サービス情報取得できません'}</div>
             `;
         } else {
@@ -608,7 +610,7 @@ function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
                     <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
                     <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
                     <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ✅ ポートスキャン完了 (6スレッド並列)</div>
-                    <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🔍 サービス情報取得中 (6スレッド並列)... ${estimatedProgress}%</div>
+                    <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🔍 サービス情報取得中 (6スレッド並列)... ${estimatedProgress}%<br><span style="font-size: 0.85em; color: #718096;">${detailsText}</span></div>
                 `;
             } else {
                 // リモートスキャンの場合
@@ -631,7 +633,7 @@ function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
                 progressBar.style.width = `${estimatedProgress}%`;
             }
             if (progressText) {
-                progressText.textContent = `🚀 高速並列スキャン実行中（6スレッド）| ${scanPhase}: ${estimatedProgress}% | 経過時間: ${elapsedSeconds}秒`;
+                progressText.textContent = `🚀 高速並列スキャン実行中（6スレッド）| ${scanPhase}: ${estimatedProgress}% | ${detailsText}`;
             }
         }
     }
@@ -674,19 +676,19 @@ async function pollPortScanResults(host) {
                     displayPortResults(host, data.data, 'priority');
                 }
 
+                // 全ポートスキャン実行中の進捗％を更新（progressデータを使用）
+                if (currentStage === 'full_scanning' && !fullDisplayed) {
+                    if (!fullScanStartTime) fullScanStartTime = attempts;
+                    // 実際の進捗データを渡す
+                    updateTabProgress(host, 'full', 'scanning', data.data);
+                }
+
                 // 全ポートスキャン結果が来た場合
                 if (currentStage === 'full' && !fullDisplayed) {
                     fullDisplayed = true;
                     updateTabProgress(host, 'full', 'complete');
                     displayPortResults(host, data.data, 'full');
                     clearInterval(pollInterval);
-                }
-
-                // 全ポートスキャン実行中の進捗％を更新
-                if (priorityDisplayed && !fullDisplayed && fullScanStartTime) {
-                    const elapsedSinceFullStart = attempts - fullScanStartTime;
-                    // 並列スキャンは早いので、より積極的に進捗を表示
-                    updateTabProgress(host, 'full', 'scanning', elapsedSinceFullStart);
                 }
             } else if (attempts >= maxAttempts) {
                 // タイムアウト

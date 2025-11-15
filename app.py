@@ -203,6 +203,22 @@ def start_port_scan(host):
             print(f"第2段階: サービス情報取得（発見したポートのみ）")
             print(f"{'='*60}")
 
+            # 進捗情報を初期化
+            port_scan_results[host] = {
+                'host': host,
+                'ports': [],
+                'os': '',
+                'scan_time': '',
+                'scan_stage': 'full_scanning',
+                'progress': {
+                    'total_ports': 65535,
+                    'scanned_ports': 0,
+                    'found_ports': 0,
+                    'service_scanned': 0,
+                    'overall_progress': 0
+                }
+            }
+
             # 全ポートを6つの範囲に分割して並列スキャン
             port_ranges = [
                 (1, 10922),
@@ -217,6 +233,7 @@ def start_port_scan(host):
             print(f"\n[第1段階] ポート検出開始...")
             port_results = []
             threads = []
+            progress_lock = threading.Lock()
 
             def scan_ports_only(start, end):
                 """指定範囲のポートを検出（サービス情報なし）"""
@@ -231,6 +248,16 @@ def start_port_scan(host):
                         port_results.append(result)
                     else:
                         print(f"  [範囲 {start}-{end}] ポートなし")
+
+                    # 進捗を更新（このポート範囲をスキャン完了）
+                    scanned_count = end - start + 1
+                    with progress_lock:
+                        port_scan_results[host]['progress']['scanned_ports'] += scanned_count
+                        # 第1段階の進捗: 0-50%
+                        stage1_progress = (port_scan_results[host]['progress']['scanned_ports'] / 65535) * 50
+                        port_scan_results[host]['progress']['overall_progress'] = round(stage1_progress, 1)
+                        print(f"  [進捗更新] {port_scan_results[host]['progress']['scanned_ports']}/{65535}ポート完了 ({port_scan_results[host]['progress']['overall_progress']}%)")
+
                 except Exception as e:
                     print(f"  [範囲 {start}-{end}] エラー: {e}")
 
@@ -252,6 +279,11 @@ def start_port_scan(host):
             for result in port_results:
                 if 'ports' in result:
                     all_open_ports.extend(result['ports'])
+
+            # 発見ポート数を進捗に記録
+            found_ports_count = len(all_open_ports)
+            with progress_lock:
+                port_scan_results[host]['progress']['found_ports'] = found_ports_count
 
             # ===== 第2段階: サービス情報取得（6スレッド並列） =====
             if len(all_open_ports) > 0:
@@ -295,6 +327,15 @@ def start_port_scan(host):
                         if result.get('ports'):
                             print(f"  [グループ{group_num}] ✓ {len(result['ports'])}ポートの情報取得完了")
                             service_results.append(result)
+
+                            # 進捗を更新（サービス情報取得完了）
+                            with progress_lock:
+                                port_scan_results[host]['progress']['service_scanned'] += len(result['ports'])
+                                # 第2段階の進捗: 50-100%
+                                if found_ports_count > 0:
+                                    stage2_progress = (port_scan_results[host]['progress']['service_scanned'] / found_ports_count) * 50
+                                    port_scan_results[host]['progress']['overall_progress'] = round(50 + stage2_progress, 1)
+                                    print(f"  [進捗更新] サービス情報 {port_scan_results[host]['progress']['service_scanned']}/{found_ports_count}ポート完了 ({port_scan_results[host]['progress']['overall_progress']}%)")
                         else:
                             print(f"  [グループ{group_num}] 情報取得なし")
                     except Exception as e:
