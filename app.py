@@ -340,8 +340,11 @@ def start_port_scan(host):
                         print(f"  [グループ{group_num}] サービス情報取得中... ({len(port_list)}ポート)")
                         print(f"  [グループ{group_num}] 対象ポート: {ports_str}")
 
-                        # -sV: サービスバージョン検出, -T5: 最速
-                        service_args = f"-p {ports_str} -sV -T5"
+                        # -sV: サービスバージョン検出
+                        # -T4: 高速スキャン（T5より安定）
+                        # --version-intensity 2: 軽量なバージョン検出（デフォルト7→2で大幅高速化）
+                        # --host-timeout 20s: ホストごとのタイムアウト
+                        service_args = f"-p {ports_str} -sV -T4 --version-intensity 2 --host-timeout 20s"
                         print(f"  [グループ{group_num}] 実行コマンド: nmap {service_args} {host}")
                         result = scanner.port_scan(host, service_args, priority_only=False, is_range_scan=True, verbose=False)
 
