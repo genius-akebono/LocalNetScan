@@ -241,6 +241,7 @@ def start_port_scan(host):
                     print(f"  [範囲 {start}-{end}] ポートスキャン中...")
                     # -sT: TCP接続スキャン, -T5: 最速, --open: オープンポートのみ, -sVなし
                     range_args = f"-p {start}-{end} -sT -T5 --open"
+                    print(f"  [範囲 {start}-{end}] 実行コマンド: nmap {range_args} {host} (サービス情報なし)")
                     result = scanner.port_scan(host, range_args, priority_only=False, is_range_scan=True, verbose=False)
 
                     if result.get('ports') and len(result['ports']) > 0:
@@ -314,14 +315,16 @@ def start_port_scan(host):
                 service_results = []
                 service_threads = []
 
-                def scan_service_info(port_list, group_num):
+                def scan_service_info(port_list, group_num, total_found_ports):
                     """指定ポートのサービス情報を取得"""
                     try:
                         ports_str = ','.join(map(str, port_list))
                         print(f"  [グループ{group_num}] サービス情報取得中... ({len(port_list)}ポート)")
+                        print(f"  [グループ{group_num}] 対象ポート: {ports_str}")
 
                         # -sV: サービスバージョン検出, -T5: 最速
                         service_args = f"-p {ports_str} -sV -T5"
+                        print(f"  [グループ{group_num}] 実行コマンド: nmap {service_args} {host}")
                         result = scanner.port_scan(host, service_args, priority_only=False, is_range_scan=True, verbose=False)
 
                         if result.get('ports'):
@@ -330,20 +333,24 @@ def start_port_scan(host):
 
                             # 進捗を更新（サービス情報取得完了）
                             with progress_lock:
-                                port_scan_results[host]['progress']['service_scanned'] += len(result['ports'])
-                                # 第2段階の進捗: 50-100%
-                                if found_ports_count > 0:
-                                    stage2_progress = (port_scan_results[host]['progress']['service_scanned'] / found_ports_count) * 50
-                                    port_scan_results[host]['progress']['overall_progress'] = round(50 + stage2_progress, 1)
-                                    print(f"  [進捗更新] サービス情報 {port_scan_results[host]['progress']['service_scanned']}/{found_ports_count}ポート完了 ({port_scan_results[host]['progress']['overall_progress']}%)")
+                                # progressキーの存在を確認
+                                if 'progress' in port_scan_results.get(host, {}):
+                                    port_scan_results[host]['progress']['service_scanned'] += len(result['ports'])
+                                    # 第2段階の進捗: 50-100%
+                                    if total_found_ports > 0:
+                                        stage2_progress = (port_scan_results[host]['progress']['service_scanned'] / total_found_ports) * 50
+                                        port_scan_results[host]['progress']['overall_progress'] = round(50 + stage2_progress, 1)
+                                        print(f"  [進捗更新] サービス情報 {port_scan_results[host]['progress']['service_scanned']}/{total_found_ports}ポート完了 ({port_scan_results[host]['progress']['overall_progress']}%)")
                         else:
                             print(f"  [グループ{group_num}] 情報取得なし")
                     except Exception as e:
+                        import traceback
                         print(f"  [グループ{group_num}] エラー: {e}")
+                        print(f"  [グループ{group_num}] トレースバック: {traceback.format_exc()}")
 
                 # サービス情報取得を並列実行
                 for idx, chunk in enumerate(port_chunks, 1):
-                    thread = threading.Thread(target=scan_service_info, args=(chunk, idx))
+                    thread = threading.Thread(target=scan_service_info, args=(chunk, idx, found_ports_count))
                     thread.daemon = True
                     thread.start()
                     service_threads.append(thread)

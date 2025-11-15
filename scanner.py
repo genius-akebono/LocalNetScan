@@ -380,6 +380,7 @@ class NetworkScanner:
             needs_root = '-sS' in scan_args or '-sU' in scan_args or '-O' in scan_args
 
             if needs_root and self.sudo_password:
+                print(f"[nmap実行] sudo nmap {scan_args} {host}")
                 print("sudo権限でnmapを実行中...")
                 # sudoでnmapを実行
                 sudo_result = self._run_nmap_with_sudo(host, scan_args)
@@ -400,6 +401,7 @@ class NetworkScanner:
                     print(f"\nOS検出: {result['os']}")
 
             else:
+                print(f"[nmap実行] nmap {scan_args} {host}")
                 print("スキャン中... (ポートとサービスを検出しています)")
                 # -sS はroot権限が必要なため、権限がない場合は -sT を使用
                 try:
