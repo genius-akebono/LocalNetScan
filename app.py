@@ -182,7 +182,7 @@ def start_port_scan(host):
 
     # スキャンオプションを取得（デフォルト: -sT -sV）
     scan_args = request.json.get('arguments', '-sT -sV') if request.json else '-sT -sV'
-    # スキャンモードを取得（priority: 優先ポートのみ、full: 全ポートのみ、both: 両方順次実行）
+    # スキャンモードを取得（priority: 優先ポートのみ、full: 全ポートのみ）
     scan_mode = request.json.get('scan_mode', 'priority') if request.json else 'priority'
 
     def scan_priority_ports():
@@ -446,7 +446,7 @@ def start_port_scan(host):
 
     # スキャンモードに応じて実行
     def run_scan():
-        """スキャンモードに応じて優先ポート、全ポート、または両方を実行"""
+        """スキャンモードに応じて優先ポートまたは全ポートを実行"""
         if scan_mode == 'priority':
             # 優先ポートのみ
             print(f"[スキャンモード] 優先ポートのみ実行")
@@ -455,12 +455,8 @@ def start_port_scan(host):
             # 全ポートのみ
             print(f"[スキャンモード] 全ポートのみ実行")
             scan_full_ports()
-        elif scan_mode == 'both':
-            # 両方を順次実行（優先ポート → 全ポート）
-            print(f"[スキャンモード] 優先ポート → 全ポート 順次実行")
-            scan_priority_ports()
-            print(f"[順次実行] 優先ポートスキャン完了、全ポートスキャン開始")
-            scan_full_ports()
+        else:
+            print(f"[エラー] 不明なスキャンモード: {scan_mode}")
 
     # スキャンをバックグラウンドスレッドで実行
     scan_thread = threading.Thread(target=run_scan)
@@ -470,8 +466,7 @@ def start_port_scan(host):
     # スキャンモードに応じたメッセージ
     messages = {
         'priority': '優先ポートスキャンを開始しました',
-        'full': '全ポートスキャンを開始しました（6スレッド並列）',
-        'both': '優先ポート → 全ポート順次スキャンを開始しました'
+        'full': '全ポートスキャンを開始しました（6スレッド並列）'
     }
 
     return jsonify({

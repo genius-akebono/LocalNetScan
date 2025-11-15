@@ -74,13 +74,9 @@
                             <input type="radio" name="scanMode" value="priority" checked style="margin-right: 8px;">
                             📌 優先ポートのみ (高速、よく使われるポート)
                         </label>
-                        <label style="display: block; margin-bottom: 8px; cursor: pointer;">
-                            <input type="radio" name="scanMode" value="full" style="margin-right: 8px;">
-                            🔍 全ポートのみ (1-65535、6スレッド並列)
-                        </label>
                         <label style="display: block; cursor: pointer;">
-                            <input type="radio" name="scanMode" value="both" style="margin-right: 8px;">
-                            🚀 両方実行 (優先ポート → 全ポート順次実行)
+                            <input type="radio" name="scanMode" value="full" style="margin-right: 8px;">
+                            🔍 全ポート (1-65535、6スレッド並列)
                         </label>
                     </div>
                 </div>
@@ -132,6 +128,6 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='script.js') }}?v=20251115-5"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v=20251115-6"></script>
 </body>
 </html>
