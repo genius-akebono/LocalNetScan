@@ -44,17 +44,17 @@ def background_scan(target_range=None):
 
         if target_range:
             print(f"\nスキャン対象: {target_range}")
+            scan_status['scan_progress'] = 10  # スキャン開始
 
-            # 複数範囲かどうかをチェック
-            if ',' in target_range:
-                ranges = [r.strip() for r in target_range.split(',')]
-                scan_status['current_subnet'] = f'複数範囲スキャン ({len(ranges)}個の範囲)'
-                scan_status['scan_progress'] = 10  # スキャン開始
-            else:
-                scan_status['current_subnet'] = f'{target_range} をスキャン中...'
-                scan_status['scan_progress'] = 10  # スキャン開始
+            # チャンクレベルの進捗を反映するコールバック
+            def progress_callback(completed_chunks, total_chunks, found_hosts):
+                # 進捗を10%から90%の範囲で更新
+                chunk_progress = 10 + int((completed_chunks / total_chunks) * 80)
+                scan_status['scan_progress'] = chunk_progress
+                scan_status['found_hosts'] = found_hosts
+                scan_status['current_subnet'] = f'{target_range} をスキャン中... (チャンク {completed_chunks}/{total_chunks})'
 
-            results = scanner.scan_ip_range(target_range)
+            results = scanner.scan_ip_range(target_range, progress_callback=progress_callback)
             scan_status['found_hosts'] = len(results)
         else:
             # サブネットを検出（デフォルト動作）
@@ -70,11 +70,20 @@ def background_scan(target_range=None):
             results = {}
             for idx, subnet in enumerate(subnets):
                 scan_status['current_subnet'] = f'{subnet} をスキャン中... ({idx+1}/{total_subnets})'
-                # 進捗を10%から90%の範囲で更新
-                scan_status['scan_progress'] = 10 + int((idx / total_subnets) * 80)
+
+                # チャンクレベルの進捗を反映するコールバック
+                def progress_callback(completed_chunks, total_chunks, found_hosts):
+                    # サブネット間の進捗: 10% + (idx/total_subnets) * 80%
+                    # サブネット内の進捗: (completed_chunks/total_chunks) * (80/total_subnets)%
+                    subnet_base_progress = 10 + int((idx / total_subnets) * 80)
+                    subnet_progress_range = int(80 / total_subnets)
+                    chunk_progress = int((completed_chunks / total_chunks) * subnet_progress_range)
+                    scan_status['scan_progress'] = subnet_base_progress + chunk_progress
+                    scan_status['found_hosts'] = len(results) + found_hosts
+                    scan_status['current_subnet'] = f'{subnet} をスキャン中... ({idx+1}/{total_subnets}) - チャンク {completed_chunks}/{total_chunks}'
 
                 print(f"\n進捗: {idx+1}/{total_subnets} サブネット")
-                subnet_results = scanner.ping_scan(subnet)
+                subnet_results = scanner.ping_scan(subnet, progress_callback=progress_callback)
                 results.update(subnet_results)
                 scan_status['found_hosts'] = len(results)
 

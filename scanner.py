@@ -11,6 +11,8 @@ import platform
 import requests
 import networkx as nx
 from typing import List, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # SSL警告を抑制（自己署名証明書のHTTPSアクセス時）
 import urllib3
@@ -186,18 +188,107 @@ class NetworkScanner:
 
         return subnets if subnets else ["192.168.0.0/24"]
 
-    def ping_scan(self, subnet: str, progress_callback=None) -> Dict[str, Dict]:
+    def _split_subnet_into_chunks(self, subnet: str, chunk_size: int = 24) -> List[str]:
         """
-        指定されたサブネットに対してPingスキャン（nmap -sn）を実行
+        サブネットを小さなチャンクに分割（並列スキャン用）
+
+        Args:
+            subnet: 分割対象のサブネット（例: "172.17.0.0/16"）
+            chunk_size: チャンクのプレフィックスサイズ（デフォルト: 24）
+
+        Returns:
+            List[str]: 分割されたサブネットのリスト
+        """
+        chunks = []
+
+        # IP範囲形式の場合はそのまま返す
+        if '-' in subnet and '/' not in subnet:
+            return [subnet]
+
+        # サブネット形式の場合
+        if '/' in subnet:
+            ip_part, prefix = subnet.split('/')
+            prefix = int(prefix)
+
+            # /24以下（小さい範囲）の場合はそのまま返す
+            if prefix >= chunk_size:
+                return [subnet]
+
+            # /16など大きな範囲の場合は/24に分割
+            ip_octets = ip_part.split('.')
+            base_ip = '.'.join(ip_octets[:2])  # 最初の2オクテット（例: 172.17）
+
+            # /16の場合、256個の/24サブネットに分割
+            if prefix == 16:
+                for third_octet in range(256):
+                    chunks.append(f"{base_ip}.{third_octet}.0/24")
+            # /8の場合はさらに細かく分割（実際にはあまり使われない）
+            elif prefix == 8:
+                for second_octet in range(256):
+                    for third_octet in range(256):
+                        chunks.append(f"{ip_octets[0]}.{second_octet}.{third_octet}.0/24")
+            # その他の場合は適切に分割
+            else:
+                # 簡易実装：とりあえずそのまま返す
+                chunks.append(subnet)
+
+        return chunks if chunks else [subnet]
+
+    def _scan_single_chunk(self, chunk: str, original_subnet: str) -> Dict[str, Dict]:
+        """
+        単一チャンクをスキャン（スレッドセーフ、並列実行用）
+
+        Args:
+            chunk: スキャン対象のチャンク（例: "192.168.0.0/24"）
+            original_subnet: 元のサブネット（結果に記録用）
+
+        Returns:
+            Dict: スキャン結果
+        """
+        results = {}
+
+        try:
+            # スレッドごとに独立したnmapインスタンスを作成
+            nm = nmap.PortScanner()
+            nm.scan(hosts=chunk, arguments='-sn')
+
+            for host in nm.all_hosts():
+                if nm[host].state() == 'up':
+                    hostname = nm[host].hostname() if nm[host].hostname() else 'Unknown'
+                    vendor = ''
+                    if 'mac' in nm[host]['addresses']:
+                        mac = nm[host]['addresses']['mac']
+                        vendor = nm[host]['vendor'].get(mac, '') if 'vendor' in nm[host] else ''
+
+                    results[host] = {
+                        'hostname': hostname,
+                        'state': 'up',
+                        'vendor': vendor,
+                        'subnet': original_subnet
+                    }
+
+                    # 見つかったホストをリアルタイムで表示
+                    print(f"  ✓ {host:15s} - {hostname}")
+
+        except Exception as e:
+            print(f"チャンク {chunk} のスキャンエラー: {e}")
+
+        return results
+
+    def ping_scan(self, subnet: str, progress_callback=None, max_threads: int = 10) -> Dict[str, Dict]:
+        """
+        指定されたサブネットに対してPingスキャン（nmap -sn）を並列実行
 
         Args:
             subnet: スキャン対象のサブネット（例: "192.168.0.0/24"）
             progress_callback: 進捗コールバック関数 callback(current, total, found_hosts)
+            max_threads: 最大スレッド数（デフォルト: 10）
 
         Returns:
             Dict: スキャン結果（キー: IPアドレス、値: ホスト情報）
         """
         results = {}
+        results_lock = threading.Lock()  # スレッドセーフな結果格納用
 
         if not self.nmap_available:
             print(f"エラー: nmapが利用できません - {self.nmap_error}")
@@ -211,12 +302,15 @@ class NetworkScanner:
             print(f"Pingスキャン開始: {subnet}")
             print(f"{'='*60}")
 
+            # サブネットを小さなチャンクに分割
+            chunks = self._split_subnet_into_chunks(subnet)
+            total_chunks = len(chunks)
+
             # サブネットから想定ホスト数を計算
             if '/' in subnet:
                 prefix = int(subnet.split('/')[1])
-                total_hosts = 2 ** (32 - prefix) - 2  # ネットワークアドレスとブロードキャストを除く
+                total_hosts = 2 ** (32 - prefix) - 2
             else:
-                # 範囲形式の場合
                 if '-' in subnet:
                     parts = subnet.split('-')
                     if len(parts) == 2 and '.' in parts[0]:
@@ -228,41 +322,50 @@ class NetworkScanner:
                 else:
                     total_hosts = 1
 
+            if total_chunks > 1:
+                print(f"高速スキャンモード: {total_chunks}個のチャンクを{max_threads}スレッドで並列実行")
             print(f"スキャン中... (最大{total_hosts}台のホストをチェック)")
             print("見つかったホスト:")
 
-            # スキャンを実行
-            self.nm.scan(hosts=subnet, arguments='-sn')
+            # チャンクを並列スキャン
+            completed_chunks = 0
+            with ThreadPoolExecutor(max_workers=max_threads) as executor:
+                # 全チャンクのスキャンを並列実行
+                future_to_chunk = {
+                    executor.submit(self._scan_single_chunk, chunk, subnet): chunk
+                    for chunk in chunks
+                }
 
-            # 結果を処理
-            found_count = 0
-            for host in self.nm.all_hosts():
-                if self.nm[host].state() == 'up':
-                    hostname = self.nm[host].hostname() if self.nm[host].hostname() else 'Unknown'
-                    vendor = ''
-                    if 'mac' in self.nm[host]['addresses']:
-                        mac = self.nm[host]['addresses']['mac']
-                        vendor = self.nm[host]['vendor'].get(mac, '') if 'vendor' in self.nm[host] else ''
+                # 完了したチャンクから結果を収集
+                for future in as_completed(future_to_chunk):
+                    chunk = future_to_chunk[future]
+                    try:
+                        chunk_results = future.result()
 
-                    results[host] = {
-                        'hostname': hostname,
-                        'state': 'up',
-                        'vendor': vendor,
-                        'subnet': subnet
-                    }
+                        # スレッドセーフに結果をマージ
+                        with results_lock:
+                            results.update(chunk_results)
 
-                    found_count += 1
-                    # 見つかったホストをリアルタイムで表示
-                    print(f"  ✓ {host:15s} - {hostname}")
+                        completed_chunks += 1
 
-                    # 進捗コールバック
-                    if progress_callback:
-                        progress_callback(found_count, total_hosts, found_count)
+                        # 進捗表示
+                        if total_chunks > 1:
+                            progress_pct = int((completed_chunks / total_chunks) * 100)
+                            print(f"[進捗] {completed_chunks}/{total_chunks} チャンク完了 ({progress_pct}%) - 検出: {len(results)}台")
+
+                        # 進捗コールバック
+                        if progress_callback:
+                            progress_callback(completed_chunks, total_chunks, len(results))
+
+                    except Exception as e:
+                        print(f"チャンク {chunk} の処理エラー: {e}")
 
             elapsed_time = time.time() - start_time
             print(f"\n{'='*60}")
             print(f"スキャン完了: {len(results)}台のホストを検出")
             print(f"所要時間: {elapsed_time:.1f}秒")
+            if total_chunks > 1:
+                print(f"並列実行: {max_threads}スレッド × {total_chunks}チャンク")
             print(f"{'='*60}\n")
 
         except Exception as e:
@@ -270,7 +373,7 @@ class NetworkScanner:
 
         return results
 
-    def scan_ip_range(self, target_range: str) -> Dict[str, Dict]:
+    def scan_ip_range(self, target_range: str, progress_callback=None) -> Dict[str, Dict]:
         """
         指定されたIP範囲をスキャン（複数範囲対応）
 
@@ -279,6 +382,7 @@ class NetworkScanner:
                 - サブネット形式: "192.168.0.0/24"
                 - IP範囲形式: "192.168.0.1-50"
                 - 複数範囲（カンマ区切り）: "192.168.0.0/24,172.17.0.0/16"
+            progress_callback: 進捗コールバック関数 callback(current, total, found_hosts)
 
         Returns:
             Dict: スキャン結果
@@ -295,7 +399,16 @@ class NetworkScanner:
 
             for idx, single_range in enumerate(ranges):
                 print(f"\n[{idx+1}/{len(ranges)}] {single_range} をスキャン中...")
-                results = self.scan_ip_range(single_range)  # 再帰呼び出し
+
+                # 複数範囲の場合、各範囲の進捗を反映
+                def range_progress_callback(completed_chunks, total_chunks, found_hosts):
+                    if progress_callback:
+                        # 範囲全体の進捗を計算
+                        overall_completed = idx * 100 + int((completed_chunks / total_chunks) * 100)
+                        overall_total = len(ranges) * 100
+                        progress_callback(overall_completed, overall_total, len(all_results) + found_hosts)
+
+                results = self.scan_ip_range(single_range, progress_callback=range_progress_callback)  # 再帰呼び出し
                 all_results.update(results)
 
             return all_results
@@ -314,7 +427,7 @@ class NetworkScanner:
                     # nmap形式に変換
                     target_range = f"{base}.{start_num}-{end_num}"
 
-        return self.ping_scan(target_range)
+        return self.ping_scan(target_range, progress_callback=progress_callback)
 
     def scan_all_subnets(self) -> Dict[str, Dict]:
         """
