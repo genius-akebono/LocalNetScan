@@ -821,14 +821,23 @@ async function displayPortResults(host, data, stage = 'full') {
         const portKey = `${port.port}/${port.protocol}`;
         const process = processInfo[portKey];
 
+        // HTTP系のポートかどうかを判定
+        const isHttpPort = port.state === 'open' &&
+                          [80, 443, 8080, 8443, 3000, 3001, 5000, 5001, 5050, 8000, 8888].includes(port.port);
+
         html += `
-            <div class="port-item ${stateClass}" style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 3px solid ${port.state === 'open' ? '#48bb78' : '#cbd5e0'};">
+            <div class="port-item ${stateClass}" data-port="${port.port}" data-host="${host}" style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 3px solid ${port.state === 'open' ? '#48bb78' : '#cbd5e0'};">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div style="flex: 1;">
                         <div>
                             <span class="port-number" style="font-weight: 700; color: #2d3748; font-size: 1rem;">${port.port}/${port.protocol}</span>
                             <span class="port-service" style="color: #4a5568; margin-left: 10px; background: #edf2f7; padding: 3px 8px; border-radius: 4px; font-size: 0.85rem;">${port.service || 'unknown'}</span>
                             ${port.state !== 'open' ? `<span style="color: #f56565; font-size: 0.85rem; margin-left: 8px;">(${port.state})</span>` : ''}
+                            ${isHttpPort ? `
+                                <button id="http-info-btn-${host}-${port.port}" class="btn-http-info" onclick="fetchHttpInfo('${host}', ${port.port})">
+                                    HTTP詳細
+                                </button>
+                            ` : ''}
                         </div>
                         ${version ? `<div style="color: #666; font-size: 0.85rem; margin-top: 5px;">📦 ${version}</div>` : ''}
                         ${process ? `
@@ -1040,6 +1049,7 @@ document.head.appendChild(style);
 document.addEventListener('click', function(e) {
     const portScanModal = document.getElementById('portScanConfigModal');
     const sudoModal = document.getElementById('sudoPasswordModal');
+    const networkMapModal = document.getElementById('networkMapModal');
 
     if (e.target === portScanModal) {
         closePortScanConfig();
@@ -1047,4 +1057,314 @@ document.addEventListener('click', function(e) {
     if (e.target === sudoModal) {
         closeSudoPasswordModal();
     }
+    if (e.target === networkMapModal) {
+        closeNetworkMapModal();
+    }
 });
+
+// ネットワークマップモーダルを開く
+async function openNetworkMapModal() {
+    const modal = document.getElementById('networkMapModal');
+    modal.classList.remove('hidden');
+
+    try {
+        const response = await fetch('/api/network-topology');
+        const data = await response.json();
+
+        if (data.status === 'error') {
+            showNotification('ネットワークトポロジーの取得に失敗しました: ' + data.message, 'error');
+            return;
+        }
+
+        // 統計情報を表示
+        displayNetworkStats(data.stats);
+
+        // ネットワークトポロジーを描画
+        drawNetworkTopology(data.nodes, data.edges);
+
+    } catch (error) {
+        console.error('Network topology fetch error:', error);
+        showNotification('ネットワークトポロジーの取得に失敗しました', 'error');
+    }
+}
+
+// ネットワークマップモーダルを閉じる
+function closeNetworkMapModal() {
+    const modal = document.getElementById('networkMapModal');
+    modal.classList.add('hidden');
+}
+
+// ネットワーク統計情報を表示
+function displayNetworkStats(stats) {
+    const statsContainer = document.getElementById('networkMapStats');
+    statsContainer.innerHTML = `
+        <div class="network-stat-item">
+            <span class="stat-value">${stats.total_hosts}</span>
+            <span class="stat-label">総ホスト数</span>
+        </div>
+        <div class="network-stat-item">
+            <span class="stat-value">${stats.subnets}</span>
+            <span class="stat-label">サブネット数</span>
+        </div>
+        <div class="network-stat-item">
+            <span class="stat-value">${stats.gateways}</span>
+            <span class="stat-label">ゲートウェイ</span>
+        </div>
+        <div class="network-stat-item">
+            <span class="stat-value">${stats.servers}</span>
+            <span class="stat-label">サーバー</span>
+        </div>
+        <div class="network-stat-item">
+            <span class="stat-value">${stats.mobile_devices}</span>
+            <span class="stat-label">モバイル機器</span>
+        </div>
+        <div class="network-stat-item">
+            <span class="stat-value">${stats.total_connections}</span>
+            <span class="stat-label">接続数</span>
+        </div>
+    `;
+}
+
+// ネットワークトポロジーを描画
+function drawNetworkTopology(nodes, edges) {
+    const canvas = document.getElementById('topologyCanvas');
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // キャンバスをクリア
+    ctx.clearRect(0, 0, width, height);
+
+    if (nodes.length === 0) {
+        ctx.font = '16px Arial';
+        ctx.fillStyle = '#718096';
+        ctx.textAlign = 'center';
+        ctx.fillText('スキャン結果がありません', width / 2, height / 2);
+        return;
+    }
+
+    // ノードの色を定義
+    const nodeColors = {
+        gateway: '#f56565',
+        server: '#4299e1',
+        mobile: '#48bb78',
+        host: '#a0aec0'
+    };
+
+    // 力指向グラフのシンプルな実装（円形配置）
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radius = Math.min(width, height) * 0.35;
+
+    // ノードの位置を計算（円形配置）
+    const nodePositions = {};
+    const angleStep = (2 * Math.PI) / nodes.length;
+
+    // ゲートウェイを中心に配置
+    const gateways = nodes.filter(n => n.type === 'gateway');
+    const otherNodes = nodes.filter(n => n.type !== 'gateway');
+
+    if (gateways.length > 0) {
+        // ゲートウェイを中心に
+        gateways.forEach((node, i) => {
+            nodePositions[node.id] = {
+                x: centerX + (gateways.length > 1 ? Math.cos(i * 2 * Math.PI / gateways.length) * 50 : 0),
+                y: centerY + (gateways.length > 1 ? Math.sin(i * 2 * Math.PI / gateways.length) * 50 : 0),
+                node: node
+            };
+        });
+
+        // 他のノードを円周上に
+        otherNodes.forEach((node, i) => {
+            const angle = i * 2 * Math.PI / otherNodes.length;
+            nodePositions[node.id] = {
+                x: centerX + Math.cos(angle) * radius,
+                y: centerY + Math.sin(angle) * radius,
+                node: node
+            };
+        });
+    } else {
+        // ゲートウェイがない場合は全て円形配置
+        nodes.forEach((node, i) => {
+            const angle = i * angleStep;
+            nodePositions[node.id] = {
+                x: centerX + Math.cos(angle) * radius,
+                y: centerY + Math.sin(angle) * radius,
+                node: node
+            };
+        });
+    }
+
+    // エッジを描画
+    ctx.strokeStyle = '#cbd5e0';
+    ctx.lineWidth = 2;
+    edges.forEach(edge => {
+        const source = nodePositions[edge.source];
+        const target = nodePositions[edge.target];
+        if (source && target) {
+            ctx.beginPath();
+            ctx.moveTo(source.x, source.y);
+            ctx.lineTo(target.x, target.y);
+            ctx.stroke();
+        }
+    });
+
+    // ノードを描画
+    Object.values(nodePositions).forEach(pos => {
+        const node = pos.node;
+        const color = nodeColors[node.type] || nodeColors.host;
+        const nodeRadius = node.type === 'gateway' ? 25 : (node.type === 'server' ? 20 : 15);
+
+        // ノード本体
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, nodeRadius, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = '#2d3748';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // ラベル
+        ctx.font = 'bold 11px Arial';
+        ctx.fillStyle = '#2d3748';
+        ctx.textAlign = 'center';
+        ctx.fillText(node.label, pos.x, pos.y - nodeRadius - 8);
+
+        // IPアドレス
+        ctx.font = '9px Arial';
+        ctx.fillStyle = '#718096';
+        ctx.fillText(node.id, pos.x, pos.y - nodeRadius - 22);
+
+        // ポート数（サーバーの場合）
+        if (node.ports > 0) {
+            ctx.font = 'bold 10px Arial';
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(node.ports, pos.x, pos.y + 4);
+        }
+    });
+}
+
+// HTTP詳細情報を取得して表示
+async function fetchHttpInfo(host, port) {
+    const buttonId = `http-info-btn-${host}-${port}`;
+    const button = document.getElementById(buttonId);
+    const containerId = `http-info-${host}-${port}`;
+    const existingContainer = document.getElementById(containerId);
+
+    // 既に表示されている場合は非表示にする
+    if (existingContainer) {
+        existingContainer.remove();
+        button.textContent = 'HTTP詳細';
+        return;
+    }
+
+    button.textContent = '読込中...';
+    button.disabled = true;
+
+    try {
+        const response = await fetch(`/api/http-info/${host}/${port}`);
+        const data = await response.json();
+
+        if (data.status === 'error') {
+            showNotification('HTTP情報の取得に失敗しました: ' + data.message, 'error');
+            button.textContent = 'HTTP詳細';
+            button.disabled = false;
+            return;
+        }
+
+        // HTTP詳細情報を表示
+        displayHttpInfo(host, port, data);
+        button.textContent = '非表示';
+        button.disabled = false;
+
+    } catch (error) {
+        console.error('HTTP info fetch error:', error);
+        showNotification('HTTP情報の取得に失敗しました', 'error');
+        button.textContent = 'HTTP詳細';
+        button.disabled = false;
+    }
+}
+
+// HTTP詳細情報を表示
+function displayHttpInfo(host, port, data) {
+    const containerId = `http-info-${host}-${port}`;
+    const portItem = document.querySelector(`.port-item[data-port="${port}"][data-host="${host}"]`);
+
+    if (!portItem) {
+        console.error(`ポート要素が見つかりません: ${host}:${port}`);
+        return;
+    }
+
+    // HTTP詳細情報のコンテナを作成
+    const infoDiv = document.createElement('div');
+    infoDiv.id = containerId;
+    infoDiv.className = 'http-info-section';
+    infoDiv.style.marginTop = '10px';
+
+    let htmlContent = '<h4>🌐 HTTP/HTTPS詳細情報</h4>';
+
+    if (!data.accessible) {
+        htmlContent += `<p style="color: #f56565;">アクセスできませんでした: ${data.error || '不明なエラー'}</p>`;
+    } else {
+        htmlContent += '<table class="http-info-table"><tbody>';
+
+        htmlContent += `<tr><td>ステータス</td><td>${data.status_code}</td></tr>`;
+        htmlContent += `<tr><td>プロトコル</td><td>${data.protocol.toUpperCase()}</td></tr>`;
+
+        if (data.title) {
+            htmlContent += `<tr><td>ページタイトル</td><td>${escapeHtml(data.title)}</td></tr>`;
+        }
+
+        if (data.server) {
+            htmlContent += `<tr><td>サーバー</td><td>${escapeHtml(data.server)}</td></tr>`;
+        }
+
+        if (data.redirect_url) {
+            htmlContent += `<tr><td>リダイレクト先</td><td>${escapeHtml(data.redirect_url)}</td></tr>`;
+        }
+
+        // その他の重要なヘッダー
+        if (data.headers['X-Powered-By']) {
+            htmlContent += `<tr><td>X-Powered-By</td><td>${escapeHtml(data.headers['X-Powered-By'])}</td></tr>`;
+        }
+
+        htmlContent += '</tbody></table>';
+
+        // セキュリティヘッダー
+        if (data.security_headers) {
+            htmlContent += '<h4 style="margin-top: 15px;">🔒 セキュリティヘッダー</h4>';
+            htmlContent += '<div>';
+
+            for (const [header, info] of Object.entries(data.security_headers)) {
+                const statusClass = info.present ? 'present' : 'missing';
+                const statusText = info.present ? '✓' : '✗';
+                htmlContent += `
+                    <div class="security-header-item">
+                        <div class="security-header-status ${statusClass}" title="${statusText}"></div>
+                        <div class="security-header-name">${header}</div>
+                        <div class="security-header-description">${info.description}</div>
+                    </div>
+                `;
+            }
+
+            htmlContent += '</div>';
+        }
+    }
+
+    infoDiv.innerHTML = htmlContent;
+
+    // ポート要素の後に挿入
+    portItem.appendChild(infoDiv);
+}
+
+// HTMLエスケープ関数
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
+}

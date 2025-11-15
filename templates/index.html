@@ -27,6 +27,9 @@
                 <button id="rescanBtn" class="btn btn-primary">
                     <span class="btn-icon">🔄</span> スキャン
                 </button>
+                <button id="networkMapBtn" class="btn btn-secondary" onclick="openNetworkMapModal()">
+                    <span class="btn-icon">🗺️</span> ネットワークマップ
+                </button>
             </div>
             <div class="status-info">
                 <span id="lastScanTime">最終スキャン: --</span>
@@ -129,6 +132,33 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='script.js') }}?v=20251115-6"></script>
+    <!-- ネットワークマップモーダル -->
+    <div id="networkMapModal" class="modal hidden">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2>🗺️ ネットワークトポロジーマップ</h2>
+                <button class="close-btn" onclick="closeNetworkMapModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="networkMapStats" class="network-stats">
+                    <!-- 統計情報がここに表示されます -->
+                </div>
+                <div id="networkMapCanvas" class="network-canvas">
+                    <canvas id="topologyCanvas" width="900" height="600"></canvas>
+                </div>
+                <div class="network-legend">
+                    <h4>凡例:</h4>
+                    <div class="legend-items">
+                        <div class="legend-item"><span class="legend-color gateway"></span> ゲートウェイ/ルーター</div>
+                        <div class="legend-item"><span class="legend-color server"></span> サーバー (5+ポート)</div>
+                        <div class="legend-item"><span class="legend-color mobile"></span> モバイル機器</div>
+                        <div class="legend-item"><span class="legend-color host"></span> その他のホスト</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}?v=20251115-7"></script>
 </body>
 </html>

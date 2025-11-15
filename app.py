@@ -838,6 +838,61 @@ def kill_process(pid):
         }), 500
 
 
+@app.route('/api/http-info/<host>/<int:port>', methods=['GET'])
+def get_http_info(host, port):
+    """
+    指定されたホストとポートのHTTP詳細情報を取得
+
+    Args:
+        host: ホストのIPアドレス
+        port: ポート番号
+
+    Returns:
+        JSON: HTTP詳細情報
+    """
+    try:
+        # HTTPSを試すかどうか（443, 8443などはHTTPS）
+        use_https = port in [443, 8443]
+
+        # HTTP情報を取得
+        http_info = scanner.get_http_info(host, port, use_https)
+
+        # HTTPSで失敗した場合、HTTPを試す
+        if not http_info['accessible'] and use_https:
+            http_info = scanner.get_http_info(host, port, use_https=False)
+
+        return jsonify(http_info)
+
+    except Exception as e:
+        print(f"HTTP情報取得エラー ({host}:{port}): {e}")
+        return jsonify({
+            'status': 'error',
+            'message': f'HTTP情報の取得に失敗しました: {str(e)}'
+        }), 500
+
+
+@app.route('/api/network-topology', methods=['GET'])
+def get_network_topology():
+    """
+    ネットワークトポロジーのグラフデータを取得
+
+    Returns:
+        JSON: ネットワークトポロジー（nodes, edges, stats）
+    """
+    try:
+        # 現在のスキャン結果からトポロジーを生成
+        topology = scanner.generate_network_topology(scan_results, port_scan_results)
+
+        return jsonify(topology)
+
+    except Exception as e:
+        print(f"ネットワークトポロジー生成エラー: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': f'ネットワークトポロジーの生成に失敗しました: {str(e)}'
+        }), 500
+
+
 @app.before_request
 def limit_remote_addr():
     """
