@@ -1050,6 +1050,7 @@ document.addEventListener('click', function(e) {
     const portScanModal = document.getElementById('portScanConfigModal');
     const sudoModal = document.getElementById('sudoPasswordModal');
     const networkMapModal = document.getElementById('networkMapModal');
+    const httpInfoModal = document.getElementById('httpInfoModal');
 
     if (e.target === portScanModal) {
         closePortScanConfig();
@@ -1059,6 +1060,9 @@ document.addEventListener('click', function(e) {
     }
     if (e.target === networkMapModal) {
         closeNetworkMapModal();
+    }
+    if (e.target === httpInfoModal) {
+        closeHttpInfoModal();
     }
 });
 
@@ -1246,20 +1250,14 @@ function drawNetworkTopology(nodes, edges) {
 
 // HTTP詳細情報を取得して表示
 async function fetchHttpInfo(host, port) {
-    const buttonId = `http-info-btn-${host}-${port}`;
-    const button = document.getElementById(buttonId);
-    const containerId = `http-info-${host}-${port}`;
-    const existingContainer = document.getElementById(containerId);
+    const modal = document.getElementById('httpInfoModal');
+    const modalTitle = document.getElementById('httpInfoModalTitle');
+    const modalBody = document.getElementById('httpInfoModalBody');
 
-    // 既に表示されている場合は非表示にする
-    if (existingContainer) {
-        existingContainer.remove();
-        button.textContent = 'HTTP詳細';
-        return;
-    }
-
-    button.textContent = '読込中...';
-    button.disabled = true;
+    // モーダルを開いて読み込み中を表示
+    modal.classList.remove('hidden');
+    modalTitle.textContent = `🌐 HTTP/HTTPS詳細情報 - ${host}:${port}`;
+    modalBody.innerHTML = '<p style="text-align: center; padding: 40px; color: #718096;">読込中...</p>';
 
     try {
         const response = await fetch(`/api/http-info/${host}/${port}`);
@@ -1267,94 +1265,83 @@ async function fetchHttpInfo(host, port) {
 
         if (data.status === 'error') {
             showNotification('HTTP情報の取得に失敗しました: ' + data.message, 'error');
-            button.textContent = 'HTTP詳細';
-            button.disabled = false;
+            closeHttpInfoModal();
             return;
         }
 
         // HTTP詳細情報を表示
         displayHttpInfo(host, port, data);
-        button.textContent = '非表示';
-        button.disabled = false;
 
     } catch (error) {
         console.error('HTTP info fetch error:', error);
         showNotification('HTTP情報の取得に失敗しました', 'error');
-        button.textContent = 'HTTP詳細';
-        button.disabled = false;
+        closeHttpInfoModal();
     }
+}
+
+// HTTP詳細情報モーダルを閉じる
+function closeHttpInfoModal() {
+    const modal = document.getElementById('httpInfoModal');
+    modal.classList.add('hidden');
 }
 
 // HTTP詳細情報を表示
 function displayHttpInfo(host, port, data) {
-    const containerId = `http-info-${host}-${port}`;
-    const portItem = document.querySelector(`.port-item[data-port="${port}"][data-host="${host}"]`);
+    const modalBody = document.getElementById('httpInfoModalBody');
 
-    if (!portItem) {
-        console.error(`ポート要素が見つかりません: ${host}:${port}`);
-        return;
-    }
-
-    // HTTP詳細情報のコンテナを作成
-    const infoDiv = document.createElement('div');
-    infoDiv.id = containerId;
-    infoDiv.className = 'http-info-section';
-    infoDiv.style.marginTop = '10px';
-
-    let htmlContent = '<h4>🌐 HTTP/HTTPS詳細情報</h4>';
+    let htmlContent = '';
 
     if (!data.accessible) {
-        htmlContent += `<p style="color: #f56565;">アクセスできませんでした: ${data.error || '不明なエラー'}</p>`;
+        htmlContent = `
+            <div style="padding: 20px; text-align: center;">
+                <div style="font-size: 48px; margin-bottom: 20px;">⚠️</div>
+                <h3 style="color: #f56565; margin-bottom: 10px;">接続できませんでした</h3>
+                <p style="color: #718096;">${data.error || '不明なエラー'}</p>
+            </div>
+        `;
     } else {
-        htmlContent += '<table class="http-info-table"><tbody>';
+        htmlContent = `
+            <div style="padding: 20px;">
+                <div style="background: #e6fffa; color: #234e52; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #38b2ac;">
+                    <h3 style="margin: 0 0 10px 0; font-size: 1.1rem;">📊 基本情報</h3>
+                    <table class="http-info-table">
+                        <tbody>
+                            <tr><td>ステータスコード</td><td><strong>${data.status_code}</strong></td></tr>
+                            <tr><td>プロトコル</td><td><strong>${data.protocol.toUpperCase()}</strong></td></tr>
+                            ${data.title ? `<tr><td>ページタイトル</td><td>${escapeHtml(data.title)}</td></tr>` : ''}
+                            ${data.server ? `<tr><td>サーバー</td><td>${escapeHtml(data.server)}</td></tr>` : ''}
+                            ${data.redirect_url ? `<tr><td>リダイレクト先</td><td style="word-break: break-all;">${escapeHtml(data.redirect_url)}</td></tr>` : ''}
+                            ${data.headers['X-Powered-By'] ? `<tr><td>X-Powered-By</td><td>${escapeHtml(data.headers['X-Powered-By'])}</td></tr>` : ''}
+                        </tbody>
+                    </table>
+                </div>
 
-        htmlContent += `<tr><td>ステータス</td><td>${data.status_code}</td></tr>`;
-        htmlContent += `<tr><td>プロトコル</td><td>${data.protocol.toUpperCase()}</td></tr>`;
-
-        if (data.title) {
-            htmlContent += `<tr><td>ページタイトル</td><td>${escapeHtml(data.title)}</td></tr>`;
-        }
-
-        if (data.server) {
-            htmlContent += `<tr><td>サーバー</td><td>${escapeHtml(data.server)}</td></tr>`;
-        }
-
-        if (data.redirect_url) {
-            htmlContent += `<tr><td>リダイレクト先</td><td>${escapeHtml(data.redirect_url)}</td></tr>`;
-        }
-
-        // その他の重要なヘッダー
-        if (data.headers['X-Powered-By']) {
-            htmlContent += `<tr><td>X-Powered-By</td><td>${escapeHtml(data.headers['X-Powered-By'])}</td></tr>`;
-        }
-
-        htmlContent += '</tbody></table>';
-
-        // セキュリティヘッダー
-        if (data.security_headers) {
-            htmlContent += '<h4 style="margin-top: 15px;">🔒 セキュリティヘッダー</h4>';
-            htmlContent += '<div>';
-
-            for (const [header, info] of Object.entries(data.security_headers)) {
-                const statusClass = info.present ? 'present' : 'missing';
-                const statusText = info.present ? '✓' : '✗';
-                htmlContent += `
-                    <div class="security-header-item">
-                        <div class="security-header-status ${statusClass}" title="${statusText}"></div>
-                        <div class="security-header-name">${header}</div>
-                        <div class="security-header-description">${info.description}</div>
+                ${data.security_headers ? `
+                    <div style="background: #f7fafc; padding: 15px; border-radius: 8px; border-left: 4px solid #805ad5;">
+                        <h3 style="margin: 0 0 15px 0; font-size: 1.1rem;">🔒 セキュリティヘッダー</h3>
+                        <div>
+                            ${Object.entries(data.security_headers).map(([header, info]) => {
+                                const statusClass = info.present ? 'present' : 'missing';
+                                const statusIcon = info.present ? '✅' : '❌';
+                                return `
+                                    <div class="security-header-item">
+                                        <div class="security-header-status ${statusClass}"></div>
+                                        <div style="flex: 1;">
+                                            <div class="security-header-name">${statusIcon} ${header}</div>
+                                            <div class="security-header-description">${info.description}</div>
+                                            ${info.present && info.value ? `<div style="font-size: 0.8rem; color: #4a5568; margin-top: 5px; font-family: monospace; background: #edf2f7; padding: 5px; border-radius: 4px;">${escapeHtml(info.value)}</div>` : ''}
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
                     </div>
-                `;
-            }
-
-            htmlContent += '</div>';
-        }
+                ` : ''}
+            </div>
+        `;
     }
 
-    infoDiv.innerHTML = htmlContent;
-
-    // ポート要素の後に挿入
-    portItem.appendChild(infoDiv);
+    modalBody.innerHTML = htmlContent;
 }
 
 // HTMLエスケープ関数
