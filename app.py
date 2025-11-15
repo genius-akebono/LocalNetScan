@@ -28,13 +28,14 @@ def background_scan(target_range=None):
     """バックグラウンドでスキャンを実行
 
     Args:
-        target_range: スキャン対象（例: "192.168.0.0/24" または "192.168.0.1-50"）
+        target_range: スキャン対象（例: "192.168.0.0/24"、"192.168.0.1-50"、または "192.168.0.0/24,172.17.0.0/16"）
     """
     global scan_status, scan_results
 
     scan_status['is_scanning'] = True
     scan_status['scan_progress'] = 0
     scan_status['current_subnet'] = 'スキャン準備中...'
+    scan_status['found_hosts'] = 0
 
     try:
         print("\n" + "="*60)
@@ -43,29 +44,44 @@ def background_scan(target_range=None):
 
         if target_range:
             print(f"\nスキャン対象: {target_range}")
-            scan_status['current_subnet'] = target_range
+
+            # 複数範囲かどうかをチェック
+            if ',' in target_range:
+                ranges = [r.strip() for r in target_range.split(',')]
+                scan_status['current_subnet'] = f'複数範囲スキャン ({len(ranges)}個の範囲)'
+                scan_status['scan_progress'] = 10  # スキャン開始
+            else:
+                scan_status['current_subnet'] = f'{target_range} をスキャン中...'
+                scan_status['scan_progress'] = 10  # スキャン開始
+
             results = scanner.scan_ip_range(target_range)
+            scan_status['found_hosts'] = len(results)
         else:
             # サブネットを検出（デフォルト動作）
             print("\n[ステップ 1/2] サブネットを検出中...")
+            scan_status['scan_progress'] = 5
             subnets = scanner.detect_subnets()
             total_subnets = len(subnets)
             print(f"✓ {total_subnets}個のサブネットを検出しました: {', '.join(subnets)}")
 
             # 各サブネットをスキャン
             print(f"\n[ステップ 2/2] 各サブネットをスキャン中...")
+            scan_status['scan_progress'] = 10
             results = {}
             for idx, subnet in enumerate(subnets):
-                scan_status['current_subnet'] = subnet
-                scan_status['scan_progress'] = int((idx / total_subnets) * 100)
+                scan_status['current_subnet'] = f'{subnet} をスキャン中... ({idx+1}/{total_subnets})'
+                # 進捗を10%から90%の範囲で更新
+                scan_status['scan_progress'] = 10 + int((idx / total_subnets) * 80)
 
                 print(f"\n進捗: {idx+1}/{total_subnets} サブネット")
                 subnet_results = scanner.ping_scan(subnet)
                 results.update(subnet_results)
+                scan_status['found_hosts'] = len(results)
 
         scan_results = results
         scan_status['last_scan_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         scan_status['scan_progress'] = 100
+        scan_status['current_subnet'] = f'完了 ({len(results)}台のホストを検出)'
 
         print("\n" + "="*60)
         print(f"全スキャン完了!")
@@ -75,10 +91,10 @@ def background_scan(target_range=None):
     except Exception as e:
         print(f"\n✗ スキャンエラー: {e}\n")
         scan_status['error'] = str(e)
+        scan_status['scan_progress'] = 0
 
     finally:
         scan_status['is_scanning'] = False
-        scan_status['current_subnet'] = ''
 
 
 @app.route('/')

@@ -82,12 +82,15 @@ class NetworkScanner:
             print(f"ローカルIP取得エラー: {e}")
             return "127.0.0.1"
 
-    def detect_subnets(self) -> List[str]:
+    def detect_subnets(self, include_docker: bool = True) -> List[str]:
         """
-        192.168.x.x のサブネットを検出
+        ローカルネットワークのサブネットを検出
+
+        Args:
+            include_docker: Dockerネットワーク（172.x.x.x）も検出する場合True
 
         Returns:
-            List[str]: 検出されたサブネットのリスト（例: ["192.168.0.0/24", "192.168.1.0/24"]）
+            List[str]: 検出されたサブネットのリスト（例: ["192.168.0.0/24", "172.17.0.0/16"]）
         """
         subnets = []
         local_ip = self.get_local_ip()
@@ -99,23 +102,56 @@ class NetworkScanner:
             subnet = f"192.168.{ip_parts[2]}.0/24"
             subnets.append(subnet)
 
-        # 追加で他の一般的な192.168.x.0サブネットもスキャン対象にする場合
-        # （複数のネットワークインターフェースがある環境を想定）
+        # 複数のネットワークインターフェースから全てのサブネットを検出
         try:
             if platform.system() == 'Linux':
                 result = subprocess.run(['ip', 'addr'], capture_output=True, text=True, timeout=5)
                 output = result.stdout
+
                 # 192.168.x.x のアドレスを抽出
-                pattern = r'inet (192\.168\.\d+\.\d+)/\d+'
+                pattern = r'inet (192\.168\.\d+\.\d+)/(\d+)'
                 matches = re.findall(pattern, output)
                 for match in matches:
-                    ip_parts = match.split('.')
-                    subnet = f"192.168.{ip_parts[2]}.0/24"
+                    ip, netmask = match
+                    ip_parts = ip.split('.')
+                    subnet = f"192.168.{ip_parts[2]}.0/{netmask}"
                     if subnet not in subnets:
                         subnets.append(subnet)
+
+                # Dockerネットワーク（172.x.x.x、10.x.x.x）を検出
+                if include_docker:
+                    # 172.x.x.x（Dockerデフォルト: 172.17.0.0/16など）
+                    pattern_docker = r'inet (172\.\d+\.\d+\.\d+)/(\d+)'
+                    matches_docker = re.findall(pattern_docker, output)
+                    for match in matches_docker:
+                        ip, netmask = match
+                        ip_parts = ip.split('.')
+                        # /16 または /24 の範囲に正規化
+                        if int(netmask) >= 24:
+                            subnet = f"172.{ip_parts[1]}.{ip_parts[2]}.0/24"
+                        else:
+                            subnet = f"172.{ip_parts[1]}.0.0/16"
+                        if subnet not in subnets:
+                            subnets.append(subnet)
+
+                    # 10.x.x.x（プライベートネットワーク）
+                    pattern_10 = r'inet (10\.\d+\.\d+\.\d+)/(\d+)'
+                    matches_10 = re.findall(pattern_10, output)
+                    for match in matches_10:
+                        ip, netmask = match
+                        ip_parts = ip.split('.')
+                        if int(netmask) >= 24:
+                            subnet = f"10.{ip_parts[1]}.{ip_parts[2]}.0/24"
+                        else:
+                            subnet = f"10.{ip_parts[1]}.0.0/16"
+                        if subnet not in subnets:
+                            subnets.append(subnet)
+
             elif platform.system() == 'Darwin':  # macOS
                 result = subprocess.run(['ifconfig'], capture_output=True, text=True, timeout=5)
                 output = result.stdout
+
+                # 192.168.x.x のアドレスを抽出
                 pattern = r'inet (192\.168\.\d+\.\d+)'
                 matches = re.findall(pattern, output)
                 for match in matches:
@@ -123,17 +159,40 @@ class NetworkScanner:
                     subnet = f"192.168.{ip_parts[2]}.0/24"
                     if subnet not in subnets:
                         subnets.append(subnet)
+
+                # Dockerネットワーク（172.x.x.x、10.x.x.x）を検出
+                if include_docker:
+                    # 172.x.x.x（Dockerデフォルト: 172.17.0.0/16など）
+                    pattern_docker = r'inet (172\.\d+\.\d+\.\d+)'
+                    matches_docker = re.findall(pattern_docker, output)
+                    for match in matches_docker:
+                        ip_parts = match.split('.')
+                        # 一般的にDockerは/16
+                        subnet = f"172.{ip_parts[1]}.0.0/16"
+                        if subnet not in subnets:
+                            subnets.append(subnet)
+
+                    # 10.x.x.x（プライベートネットワーク）
+                    pattern_10 = r'inet (10\.\d+\.\d+\.\d+)'
+                    matches_10 = re.findall(pattern_10, output)
+                    for match in matches_10:
+                        ip_parts = match.split('.')
+                        subnet = f"10.{ip_parts[1]}.0.0/16"
+                        if subnet not in subnets:
+                            subnets.append(subnet)
+
         except Exception as e:
             print(f"サブネット検出エラー: {e}")
 
         return subnets if subnets else ["192.168.0.0/24"]
 
-    def ping_scan(self, subnet: str) -> Dict[str, Dict]:
+    def ping_scan(self, subnet: str, progress_callback=None) -> Dict[str, Dict]:
         """
         指定されたサブネットに対してPingスキャン（nmap -sn）を実行
 
         Args:
             subnet: スキャン対象のサブネット（例: "192.168.0.0/24"）
+            progress_callback: 進捗コールバック関数 callback(current, total, found_hosts)
 
         Returns:
             Dict: スキャン結果（キー: IPアドレス、値: ホスト情報）
@@ -151,13 +210,32 @@ class NetworkScanner:
             print(f"\n{'='*60}")
             print(f"Pingスキャン開始: {subnet}")
             print(f"{'='*60}")
-            print("スキャン中... (最大254台のホストをチェック)")
+
+            # サブネットから想定ホスト数を計算
+            if '/' in subnet:
+                prefix = int(subnet.split('/')[1])
+                total_hosts = 2 ** (32 - prefix) - 2  # ネットワークアドレスとブロードキャストを除く
+            else:
+                # 範囲形式の場合
+                if '-' in subnet:
+                    parts = subnet.split('-')
+                    if len(parts) == 2 and '.' in parts[0]:
+                        start_ip = parts[0].split('.')[-1]
+                        end_ip = parts[1]
+                        total_hosts = int(end_ip) - int(start_ip) + 1
+                    else:
+                        total_hosts = 254
+                else:
+                    total_hosts = 1
+
+            print(f"スキャン中... (最大{total_hosts}台のホストをチェック)")
             print("見つかったホスト:")
 
             # スキャンを実行
             self.nm.scan(hosts=subnet, arguments='-sn')
 
             # 結果を処理
+            found_count = 0
             for host in self.nm.all_hosts():
                 if self.nm[host].state() == 'up':
                     hostname = self.nm[host].hostname() if self.nm[host].hostname() else 'Unknown'
@@ -173,8 +251,13 @@ class NetworkScanner:
                         'subnet': subnet
                     }
 
+                    found_count += 1
                     # 見つかったホストをリアルタイムで表示
                     print(f"  ✓ {host:15s} - {hostname}")
+
+                    # 進捗コールバック
+                    if progress_callback:
+                        progress_callback(found_count, total_hosts, found_count)
 
             elapsed_time = time.time() - start_time
             print(f"\n{'='*60}")
@@ -189,12 +272,13 @@ class NetworkScanner:
 
     def scan_ip_range(self, target_range: str) -> Dict[str, Dict]:
         """
-        指定されたIP範囲をスキャン
+        指定されたIP範囲をスキャン（複数範囲対応）
 
         Args:
             target_range: スキャン対象
                 - サブネット形式: "192.168.0.0/24"
                 - IP範囲形式: "192.168.0.1-50"
+                - 複数範囲（カンマ区切り）: "192.168.0.0/24,172.17.0.0/16"
 
         Returns:
             Dict: スキャン結果
@@ -203,12 +287,25 @@ class NetworkScanner:
             print(f"エラー: nmapが利用できません - {self.nmap_error}")
             return {}
 
+        # カンマ区切りで複数範囲が指定されている場合
+        if ',' in target_range:
+            ranges = [r.strip() for r in target_range.split(',')]
+            print(f"\n複数範囲スキャンモード: {len(ranges)}個の範囲を検出")
+            all_results = {}
+
+            for idx, single_range in enumerate(ranges):
+                print(f"\n[{idx+1}/{len(ranges)}] {single_range} をスキャン中...")
+                results = self.scan_ip_range(single_range)  # 再帰呼び出し
+                all_results.update(results)
+
+            return all_results
+
         # IP範囲形式を変換（192.168.0.1-50 → 192.168.0.1-192.168.0.50）
-        if '-' in target_range and '/' not in target_range:
+        if '-' in target_range and '/' not in target_range and ',' not in target_range:
             parts = target_range.split('-')
             if len(parts) == 2:
-                base_ip = parts[0]
-                end_num = parts[1]
+                base_ip = parts[0].strip()
+                end_num = parts[1].strip()
                 # IPアドレスのベース部分を取得（例: 192.168.0）
                 ip_parts = base_ip.split('.')
                 if len(ip_parts) == 4:
