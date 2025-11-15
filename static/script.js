@@ -131,7 +131,10 @@ async function checkScanStatus() {
         if (status.is_scanning) {
             scanStatus.classList.remove('hidden');
             progressBar.style.width = status.scan_progress + '%';
-            progressText.textContent = `スキャン中... ${status.scan_progress}% (${status.current_subnet})`;
+
+            // 見つかったホスト数を表示
+            const hostsInfo = status.found_hosts > 0 ? ` - ${status.found_hosts}台検出` : '';
+            progressText.textContent = `スキャン中... ${status.scan_progress}%${hostsInfo} (${status.current_subnet})`;
             rescanBtn.disabled = true;
         } else {
             scanStatus.classList.add('hidden');

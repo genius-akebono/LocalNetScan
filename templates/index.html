@@ -42,8 +42,12 @@
             <div class="examples">
                 <span class="example-item">192.168.0.1-50</span>
                 <span class="example-item">192.168.0.0/24</span>
-                <span class="example-item">192.168.1.100-200</span>
+                <span class="example-item">172.17.0.0/16</span>
+                <span class="example-item">192.168.0.0/24,172.17.0.0/16</span>
             </div>
+            <p style="font-size: 0.85rem; color: #718096; margin-top: 8px;">
+                💡 ヒント: カンマ区切りで複数範囲を同時スキャン可能（Dockerネットワーク等）
+            </p>
         </div>
 
         <div id="scanStatus" class="scan-status hidden">
@@ -171,6 +175,6 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='script.js') }}?v=20251115-8"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v=20251115-9"></script>
 </body>
 </html>
