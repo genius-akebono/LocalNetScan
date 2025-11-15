@@ -8,7 +8,13 @@ import socket
 import subprocess
 import re
 import platform
+import requests
+import networkx as nx
 from typing import List, Dict, Optional
+
+# SSL警告を抑制（自己署名証明書のHTTPSアクセス時）
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class NetworkScanner:
@@ -469,3 +475,231 @@ class NetworkScanner:
             Dict: スキャン結果
         """
         return self.scan_results
+
+    def get_http_info(self, host: str, port: int = 80, use_https: bool = False) -> Dict:
+        """
+        HTTPサービスの詳細情報を取得
+
+        Args:
+            host: 対象ホストのIPアドレス
+            port: ポート番号（デフォルト: 80）
+            use_https: HTTPSを使用する場合True
+
+        Returns:
+            Dict: HTTP詳細情報
+        """
+        result = {
+            'host': host,
+            'port': port,
+            'protocol': 'https' if use_https else 'http',
+            'accessible': False,
+            'title': '',
+            'server': '',
+            'headers': {},
+            'security_headers': {},
+            'status_code': 0,
+            'redirect_url': '',
+            'error': ''
+        }
+
+        protocol = 'https' if use_https else 'http'
+        url = f"{protocol}://{host}:{port}"
+
+        try:
+            # タイムアウト3秒でHTTPリクエスト、リダイレクト追従
+            response = requests.get(
+                url,
+                timeout=3,
+                allow_redirects=True,
+                verify=False  # 自己署名証明書も許可
+            )
+
+            result['accessible'] = True
+            result['status_code'] = response.status_code
+
+            # リダイレクトされた場合の最終URL
+            if response.url != url:
+                result['redirect_url'] = response.url
+
+            # HTMLタイトルを抽出
+            if 'text/html' in response.headers.get('Content-Type', ''):
+                import re
+                title_match = re.search(r'<title[^>]*>(.*?)</title>', response.text, re.IGNORECASE | re.DOTALL)
+                if title_match:
+                    result['title'] = title_match.group(1).strip()[:200]  # 最大200文字
+
+            # サーバー情報
+            result['server'] = response.headers.get('Server', '')
+
+            # 主要なヘッダー情報
+            important_headers = [
+                'Server', 'X-Powered-By', 'Content-Type',
+                'Content-Length', 'Last-Modified', 'ETag'
+            ]
+            for header in important_headers:
+                if header in response.headers:
+                    result['headers'][header] = response.headers[header]
+
+            # セキュリティヘッダーのチェック
+            security_headers = {
+                'Strict-Transport-Security': 'HSTS',
+                'Content-Security-Policy': 'CSP',
+                'X-Frame-Options': 'Clickjacking Protection',
+                'X-Content-Type-Options': 'MIME Sniffing Protection',
+                'X-XSS-Protection': 'XSS Protection',
+                'Referrer-Policy': 'Referrer Policy',
+                'Permissions-Policy': 'Permissions Policy'
+            }
+
+            for header, description in security_headers.items():
+                if header in response.headers:
+                    result['security_headers'][header] = {
+                        'value': response.headers[header],
+                        'description': description,
+                        'present': True
+                    }
+                else:
+                    result['security_headers'][header] = {
+                        'value': '',
+                        'description': description,
+                        'present': False
+                    }
+
+        except requests.exceptions.SSLError as e:
+            # HTTPSで失敗した場合、HTTPを試す
+            if use_https:
+                result['error'] = f'SSL/TLS error: {str(e)[:100]}'
+            else:
+                result['error'] = str(e)[:100]
+        except requests.exceptions.ConnectionError:
+            result['error'] = 'Connection refused or timeout'
+        except requests.exceptions.Timeout:
+            result['error'] = 'Request timeout (3s)'
+        except Exception as e:
+            result['error'] = str(e)[:100]
+
+        return result
+
+    def generate_network_topology(self, scan_results: Dict, port_results: Dict) -> Dict:
+        """
+        ネットワークトポロジーのグラフデータを生成
+
+        Args:
+            scan_results: Pingスキャン結果
+            port_results: ポートスキャン結果
+
+        Returns:
+            Dict: ネットワークトポロジーのグラフデータ（nodes, edges, stats）
+        """
+        G = nx.Graph()
+
+        # ゲートウェイ（ルーター）を推定 - 通常は .1 か .254
+        gateway_candidates = []
+        subnets_map = {}
+
+        # サブネット毎にホストを分類
+        for ip, info in scan_results.items():
+            subnet = info.get('subnet', '192.168.0.0/24')
+            if subnet not in subnets_map:
+                subnets_map[subnet] = []
+            subnets_map[subnet].append(ip)
+
+            # ゲートウェイ候補を特定
+            ip_parts = ip.split('.')
+            if ip_parts[-1] in ['1', '254']:
+                gateway_candidates.append(ip)
+
+        # ノードを追加
+        for ip, info in scan_results.items():
+            hostname = info.get('hostname', 'Unknown')
+            vendor = info.get('vendor', '')
+            subnet = info.get('subnet', '')
+
+            # ポート数を取得
+            open_ports = []
+            if ip in port_results:
+                open_ports = [p['port'] for p in port_results[ip].get('ports', [])]
+
+            # ノードタイプを判定
+            node_type = 'host'
+            if ip in gateway_candidates:
+                node_type = 'gateway'
+            elif len(open_ports) > 5:
+                node_type = 'server'
+            elif vendor and any(v in vendor.lower() for v in ['apple', 'samsung', 'huawei', 'xiaomi']):
+                node_type = 'mobile'
+
+            G.add_node(ip,
+                      label=hostname if hostname != 'Unknown' else ip,
+                      hostname=hostname,
+                      vendor=vendor,
+                      subnet=subnet,
+                      type=node_type,
+                      ports=len(open_ports),
+                      port_list=open_ports[:10])  # 最大10ポートまで表示
+
+        # エッジを追加（同じサブネット内のホストを接続）
+        for subnet, hosts in subnets_map.items():
+            # ゲートウェイがあれば、全ホストをゲートウェイに接続
+            subnet_gateway = None
+            for gw in gateway_candidates:
+                if gw in hosts:
+                    subnet_gateway = gw
+                    break
+
+            if subnet_gateway:
+                # スター型トポロジー（ゲートウェイ中心）
+                for host in hosts:
+                    if host != subnet_gateway:
+                        G.add_edge(subnet_gateway, host, subnet=subnet)
+            else:
+                # ゲートウェイがない場合は、メッシュ型で一部接続
+                # （見やすさのため、全てを接続しない）
+                if len(hosts) <= 5:
+                    # ホストが少ない場合は全て接続
+                    for i, host1 in enumerate(hosts):
+                        for host2 in hosts[i+1:]:
+                            G.add_edge(host1, host2, subnet=subnet)
+                else:
+                    # ホストが多い場合は最初のホストをハブとして使用
+                    hub = hosts[0]
+                    for host in hosts[1:]:
+                        G.add_edge(hub, host, subnet=subnet)
+
+        # グラフデータをJSON形式に変換
+        nodes = []
+        for node, attrs in G.nodes(data=True):
+            nodes.append({
+                'id': node,
+                'label': attrs.get('label', node),
+                'hostname': attrs.get('hostname', ''),
+                'vendor': attrs.get('vendor', ''),
+                'subnet': attrs.get('subnet', ''),
+                'type': attrs.get('type', 'host'),
+                'ports': attrs.get('ports', 0),
+                'port_list': attrs.get('port_list', [])
+            })
+
+        edges = []
+        for source, target, attrs in G.edges(data=True):
+            edges.append({
+                'source': source,
+                'target': target,
+                'subnet': attrs.get('subnet', '')
+            })
+
+        # 統計情報
+        stats = {
+            'total_hosts': len(G.nodes()),
+            'total_connections': len(G.edges()),
+            'subnets': len(subnets_map),
+            'gateways': len(gateway_candidates),
+            'servers': len([n for n, attrs in G.nodes(data=True) if attrs.get('type') == 'server']),
+            'mobile_devices': len([n for n, attrs in G.nodes(data=True) if attrs.get('type') == 'mobile'])
+        }
+
+        return {
+            'nodes': nodes,
+            'edges': edges,
+            'stats': stats
+        }
