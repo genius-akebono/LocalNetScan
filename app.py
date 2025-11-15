@@ -191,18 +191,12 @@ def start_port_scan(host):
             fast_scan_args = scan_args.replace('-sV', '-sV -T5') if '-sV' in scan_args else scan_args + ' -T5'
             priority_result = scanner.port_scan(host, fast_scan_args, priority_only=True)
 
-            # 全ポートスキャンの進捗情報を保持
-            existing_progress = None
-            if host in port_scan_results and 'progress' in port_scan_results[host]:
-                existing_progress = port_scan_results[host]['progress']
-                print(f"[優先ポート完了] 既存の進捗情報を保持: {existing_progress}")
+            # 全ポートスキャンが実行中の場合は上書きしない
+            if host in port_scan_results and port_scan_results[host].get('scan_stage') == 'full_scanning':
+                print(f"[優先ポート完了] 全ポートスキャン実行中のため、結果を上書きしません")
+                return
 
             port_scan_results[host] = priority_result
-
-            # 進捗情報を復元
-            if existing_progress:
-                port_scan_results[host]['progress'] = existing_progress
-                print(f"[優先ポート完了] 進捗情報を復元しました")
         except Exception as e:
             print(f"\n優先ポートスキャンエラー ({host}): {e}\n")
 
