@@ -565,11 +565,23 @@ function updateTabProgress(host, tabName, stage, progressData = null) {
                 <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> 結果の解析完了</div>
             `;
         }
+
+        // 完了時にプログレスバーを非表示にする
+        const progressBarContainer = document.getElementById(`${tabName}-scan-progress-bar-container-${hostKey}`);
+        if (progressBarContainer) {
+            progressBarContainer.style.display = 'none';
+        }
     } else if (stage === 'error') {
         html = `
             <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
             <div style="margin-bottom: 5px; color: #f56565;"><input type="checkbox" disabled> ❌ スキャン失敗</div>
         `;
+
+        // エラー時にもプログレスバーを非表示にする
+        const progressBarContainer = document.getElementById(`${tabName}-scan-progress-bar-container-${hostKey}`);
+        if (progressBarContainer) {
+            progressBarContainer.style.display = 'none';
+        }
     } else if (stage === 'scanning') {
         // 全ポートスキャン実行中（進捗％付き）- 6スレッド、2段階スキャン
         // progressDataから実際のスキャン数に基づく進捗を取得
