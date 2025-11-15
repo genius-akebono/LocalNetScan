@@ -199,17 +199,18 @@ def start_port_scan(host):
         try:
             print(f"\n{'='*60}")
             print(f"[2段階スキャン開始] {host}")
-            print(f"第1段階: ポート検出（5スレッド並列）")
+            print(f"第1段階: ポート検出（6スレッド並列）")
             print(f"第2段階: サービス情報取得（発見したポートのみ）")
             print(f"{'='*60}")
 
-            # 全ポートを5つの範囲に分割して並列スキャン
+            # 全ポートを6つの範囲に分割して並列スキャン
             port_ranges = [
-                (1, 13107),
-                (13108, 26214),
-                (26215, 39321),
-                (39322, 52428),
-                (52429, 65535)
+                (1, 10922),
+                (10923, 21844),
+                (21845, 32766),
+                (32767, 43688),
+                (43689, 54610),
+                (54611, 65535)
             ]
 
             # ===== 第1段階: ポート検出（全範囲を並列スキャン） =====
@@ -252,24 +253,24 @@ def start_port_scan(host):
                 if 'ports' in result:
                     all_open_ports.extend(result['ports'])
 
-            # ===== 第2段階: サービス情報取得（5スレッド並列） =====
+            # ===== 第2段階: サービス情報取得（6スレッド並列） =====
             if len(all_open_ports) > 0:
-                print(f"\n[第2段階] サービス情報取得開始（5スレッド並列）...")
+                print(f"\n[第2段階] サービス情報取得開始（6スレッド並列）...")
                 print(f"  発見したポート数: {len(all_open_ports)}個")
 
                 # ポート番号のみ抽出してソート
                 port_numbers = sorted([p['port'] for p in all_open_ports])
 
-                # ポートを5グループに分割（できるだけ均等に）
-                chunk_size = max(1, len(port_numbers) // 5)
+                # ポートを6グループに分割（できるだけ均等に）
+                chunk_size = max(1, len(port_numbers) // 6)
                 port_chunks = []
                 for i in range(0, len(port_numbers), chunk_size):
                     chunk = port_numbers[i:i + chunk_size]
                     if chunk:
                         port_chunks.append(chunk)
 
-                # 最後の小さなチャンクを前のチャンクに統合（5つを超えた場合）
-                if len(port_chunks) > 5:
+                # 最後の小さなチャンクを前のチャンクに統合（6つを超えた場合）
+                if len(port_chunks) > 6:
                     last_chunk = port_chunks.pop()
                     port_chunks[-1].extend(last_chunk)
 

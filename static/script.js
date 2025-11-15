@@ -446,7 +446,7 @@ function createPortScanTabs(host) {
                         data-tab="full"
                         onclick="switchTab('${host}', 'full')"
                         style="flex: 1; padding: 12px 20px; background: #cbd5e0; color: #4a5568; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; font-size: 0.95rem; transition: all 0.3s;">
-                    🔍 全ポート (1-65535)<br><span style="font-size: 0.75rem; font-weight: 400; opacity: 0.8;">🚀 並列5スレッド</span>
+                    🔍 全ポート (1-65535)<br><span style="font-size: 0.75rem; font-weight: 400; opacity: 0.8;">🚀 並列6スレッド</span>
                 </button>
             </div>
 
@@ -571,22 +571,25 @@ function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
             <div style="margin-bottom: 5px; color: #f56565;"><input type="checkbox" disabled> ❌ スキャン失敗</div>
         `;
     } else if (stage === 'scanning') {
-        // 全ポートスキャン実行中（進捗％付き）- 5スレッド、2段階スキャン
+        // 全ポートスキャン実行中（進捗％付き）- 6スレッド、2段階スキャン
         let estimatedProgress = 0;
         let scanPhase = '';
 
-        // 2段階スキャン: ポートスキャン（0-50%）→ サービス情報取得（50-100%）
-        if (elapsedSeconds <= 6) {
-            // ポートスキャン段階（6秒で50%）
-            estimatedProgress = Math.min(50, (elapsedSeconds / 6) * 50);
+        // 2段階スキャン: ポートスキャン（0-50%）→ サービス情報取得（50-99%）
+        // 第1段階: 0-30秒で0→50% (ポート検出)
+        // 第2段階: 30-70秒で50→99% (サービス情報取得)
+        // 70秒以降は99%で固定（実際の完了時に100%になる）
+        if (elapsedSeconds <= 30) {
+            // ポートスキャン段階（30秒で50%）
+            estimatedProgress = Math.min(50, (elapsedSeconds / 30) * 50);
             scanPhase = 'ポートスキャン';
-        } else if (elapsedSeconds <= 14) {
-            // サービス情報取得段階（8秒で50%→90%）
-            estimatedProgress = 50 + ((elapsedSeconds - 6) / 8) * 40;
+        } else if (elapsedSeconds <= 70) {
+            // サービス情報取得段階（40秒で50%→99%）
+            estimatedProgress = 50 + ((elapsedSeconds - 30) / 40) * 49;
             scanPhase = 'サービス情報取得';
         } else {
-            // 最終段階（90%→100%）
-            estimatedProgress = Math.min(100, 90 + ((elapsedSeconds - 14) / 6) * 10);
+            // 最終段階（99%で停止し、実際の完了を待つ）
+            estimatedProgress = 99;
             scanPhase = 'サービス情報取得';
         }
         estimatedProgress = Math.round(estimatedProgress);
@@ -596,23 +599,23 @@ function updateTabProgress(host, tabName, stage, elapsedSeconds = 0) {
             html = `
                 <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
                 <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
-                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🚀 ポートスキャン実行中 (5スレッド並列)... ${estimatedProgress}%</div>
-                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> ${isLocal ? 'サービス情報取得待機中 (5スレッド並列)...' : 'リモートスキャンの為、サービス情報取得できません'}</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🚀 ポートスキャン実行中 (6スレッド並列)... ${estimatedProgress}%</div>
+                <div style="margin-bottom: 5px;"><input type="checkbox" disabled> ${isLocal ? 'サービス情報取得待機中 (6スレッド並列)...' : 'リモートスキャンの為、サービス情報取得できません'}</div>
             `;
         } else {
             if (isLocal) {
                 html = `
                     <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
                     <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
-                    <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ✅ ポートスキャン完了 (5スレッド並列)</div>
-                    <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🔍 サービス情報取得中 (5スレッド並列)... ${estimatedProgress}%</div>
+                    <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ✅ ポートスキャン完了 (6スレッド並列)</div>
+                    <div style="margin-bottom: 5px;"><input type="checkbox" disabled> 🔍 サービス情報取得中 (6スレッド並列)... ${estimatedProgress}%</div>
                 `;
             } else {
                 // リモートスキャンの場合
                 html = `
                     <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> スキャン開始</div>
                     <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> コマンド実行完了</div>
-                    <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ✅ ポートスキャン完了 (5スレッド並列)</div>
+                    <div style="margin-bottom: 5px;"><input type="checkbox" checked disabled> ✅ ポートスキャン完了 (6スレッド並列)</div>
                     <div style="margin-bottom: 5px; color: #718096;"><input type="checkbox" disabled> リモートスキャンの為、サービス情報取得できません</div>
                 `;
             }
