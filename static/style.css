@@ -617,6 +617,11 @@ header h1 {
     max-width: 1200px;
 }
 
+.modal-medium {
+    width: 90%;
+    max-width: 800px;
+}
+
 .network-stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -766,9 +771,9 @@ header h1 {
 
 .security-header-item {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 0;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 0;
     border-bottom: 1px solid #e2e8f0;
 }
 
@@ -781,6 +786,7 @@ header h1 {
     height: 20px;
     border-radius: 50%;
     flex-shrink: 0;
+    margin-top: 2px;
 }
 
 .security-header-status.present {
@@ -794,7 +800,8 @@ header h1 {
 .security-header-name {
     font-weight: 600;
     color: #2d3748;
-    min-width: 200px;
+    font-size: 0.95rem;
+    margin-bottom: 4px;
 }
 
 .security-header-description {

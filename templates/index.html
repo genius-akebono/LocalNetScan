@@ -158,6 +158,19 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='script.js') }}?v=20251115-7"></script>
+    <!-- HTTP詳細情報モーダル -->
+    <div id="httpInfoModal" class="modal hidden">
+        <div class="modal-content modal-medium">
+            <div class="modal-header">
+                <h2 id="httpInfoModalTitle">🌐 HTTP/HTTPS詳細情報</h2>
+                <button class="close-btn" onclick="closeHttpInfoModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="httpInfoModalBody" style="max-height: 600px; overflow-y: auto;">
+                <!-- HTTP詳細情報がここに表示されます -->
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}?v=20251115-8"></script>
 </body>
 </html>
