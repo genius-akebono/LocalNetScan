@@ -316,17 +316,40 @@ def get_process_info(host):
 
     process_info = {}
 
+    # ローカルホストの場合のみプロセス情報を取得
+    # リモートホストの場合は空のデータを返す（SSHアクセスが必要なため）
+    local_ips = ['127.0.0.1', 'localhost', '::1']
+
+    # 自分のローカルIPアドレスも取得
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        local_ips.append(local_ip)
+    except:
+        pass
+
+    if host not in local_ips:
+        # リモートホストの場合は空のデータを返す
+        return jsonify({
+            'status': 'success',
+            'data': {},
+            'message': 'リモートホストのプロセス情報は取得できません'
+        })
+
     try:
         # lsof または netstat を使用してポート情報を取得
         # Linuxの場合は ss または netstat を使用
-        result = subprocess.run(
-            ['ss', '-tunlp'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-
-        if result.returncode != 0:
+        try:
+            result = subprocess.run(
+                ['ss', '-tunlp'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+        except FileNotFoundError:
             # ssが使えない場合はnetstatを試す
             result = subprocess.run(
                 ['netstat', '-tunlp'],
@@ -363,14 +386,23 @@ def get_process_info(host):
 
     except subprocess.TimeoutExpired:
         return jsonify({
-            'status': 'error',
+            'status': 'success',
+            'data': {},
             'message': 'プロセス情報の取得がタイムアウトしました'
-        }), 500
+        })
+    except FileNotFoundError:
+        # ssもnetstatも見つからない場合
+        return jsonify({
+            'status': 'success',
+            'data': {},
+            'message': 'プロセス情報取得コマンドが見つかりません（ss/netstat）'
+        })
     except Exception as e:
         return jsonify({
-            'status': 'error',
+            'status': 'success',
+            'data': {},
             'message': f'プロセス情報の取得に失敗しました: {str(e)}'
-        }), 500
+        })
 
 
 @app.route('/api/kill-process/<int:pid>', methods=['POST'])

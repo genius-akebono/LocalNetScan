@@ -407,25 +407,33 @@ function updateScanProgress(host, stage, command = '') {
 
 // ポートスキャン結果をポーリング
 async function pollPortScanResults(host) {
-    const maxAttempts = 120; // 最大2分間ポーリング
+    const maxAttempts = 300; // 最大5分間ポーリング（全ポートスキャンは時間がかかる）
     let attempts = 0;
     let progressStage = 'started';
+    const startTime = Date.now();
 
     const pollInterval = setInterval(async () => {
         attempts++;
+        const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
 
-        // 進捗ステージを更新
+        // 進捗ステージを更新（経過時間に応じて）
         if (attempts === 2) {
             updateScanProgress(host, 'detecting');
-        } else if (attempts === 5) {
+        } else if (attempts === 10) {
             updateScanProgress(host, 'analyzing');
+        } else if (attempts % 10 === 0 && attempts > 10) {
+            // 10秒ごとに経過時間を表示
+            updateScanProgressWithTime(host, 'analyzing', elapsedSeconds);
         }
 
         try {
             const response = await fetch(`/api/port-scan/${host}`);
             const data = await response.json();
 
-            if (data.status === 'success') {
+            console.log(`[Poll ${attempts}] Status: ${data.status}, Ports: ${data.data ? data.data.ports?.length : 'N/A'}`);
+
+            if (data.status === 'success' && data.data) {
+                console.log(`スキャン完了！ホスト: ${host}, ポート数: ${data.data.ports?.length || 0}`);
                 // 進捗完了
                 updateScanProgress(host, 'complete');
                 // 結果を表示
@@ -433,8 +441,9 @@ async function pollPortScanResults(host) {
                 clearInterval(pollInterval);
             } else if (attempts >= maxAttempts) {
                 // タイムアウト
+                console.error(`タイムアウト: ホスト ${host}`);
                 const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
-                portsDiv.innerHTML = '<p style="color: #f56565; font-size: 0.9rem;">スキャンがタイムアウトしました</p>';
+                portsDiv.innerHTML = '<p style="color: #f56565; font-size: 0.9rem;">スキャンがタイムアウトしました（5分経過）</p>';
                 clearInterval(pollInterval);
             }
         } catch (error) {
@@ -446,14 +455,42 @@ async function pollPortScanResults(host) {
     }, 1000); // 1秒ごとにチェック
 }
 
+// スキャン進捗を経過時間付きで更新
+function updateScanProgressWithTime(host, stage, elapsedSeconds) {
+    const progressDiv = document.getElementById(`scan-progress-${host.replace(/\./g, '-')}`);
+    if (!progressDiv) return;
+
+    const minutes = Math.floor(elapsedSeconds / 60);
+    const seconds = elapsedSeconds % 60;
+    const timeStr = minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
+
+    let html = `
+        <div><input type="checkbox" checked disabled> スキャン開始</div>
+        <div><input type="checkbox" checked disabled> コマンド実行完了</div>
+        <div><input type="checkbox" checked disabled> ポート検出完了</div>
+        <div><input type="checkbox" disabled> サービス情報取得中... (${timeStr}経過)</div>
+    `;
+
+    progressDiv.innerHTML = html;
+}
+
 // ポート結果を表示
 async function displayPortResults(host, data) {
+    console.log(`displayPortResults called for ${host}:`, data);
     const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
 
-    if (!data || data.ports.length === 0) {
+    if (!portsDiv) {
+        console.error(`portsDiv not found for host: ${host}`);
+        return;
+    }
+
+    if (!data || !data.ports || data.ports.length === 0) {
+        console.log(`No ports found for ${host}`);
         portsDiv.innerHTML = '<p style="color: #999; font-size: 0.9rem;">開いているポートが見つかりませんでした</p>';
         return;
     }
+
+    console.log(`Displaying ${data.ports.length} ports for ${host}`);
 
     let html = '';
 
