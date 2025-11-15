@@ -250,7 +250,13 @@ class NetworkScanner:
         try:
             # スレッドごとに独立したnmapインスタンスを作成
             nm = nmap.PortScanner()
-            nm.scan(hosts=chunk, arguments='-sn')
+            # 高速化オプション:
+            # -sn: PINGスキャン（ポートスキャンなし）
+            # -T4: 高速タイミング（aggressive）
+            # --min-rate 300: 1秒あたり最低300パケット送信
+            # --host-timeout 10s: ホストごとのタイムアウト10秒
+            # --max-retries 1: 再試行回数を1回に制限
+            nm.scan(hosts=chunk, arguments='-sn -T4 --min-rate 300 --host-timeout 10s --max-retries 1')
 
             for host in nm.all_hosts():
                 if nm[host].state() == 'up':
