@@ -355,8 +355,8 @@ async function executePortScan() {
     // モーダルを閉じる
     closePortScanConfig();
 
-    // タブUIを作成（初期表示から優先ポート・全ポートのタブを表示）
-    createPortScanTabs(targetHost);
+    // タブUIを作成（初期表示から優先ポート・全ポートのタブを表示、スキャンモードを渡す）
+    createPortScanTabs(targetHost, scanMode);
 
     try {
         const response = await fetch(`/api/port-scan/${targetHost}`, {
@@ -381,7 +381,7 @@ async function executePortScan() {
             if (scanMode === 'full' || scanMode === 'both') {
                 updateTabProgress(targetHost, 'full', 'started');
             }
-            // ポーリングを開始して結果を取得
+            // ポーリングを開始して結果を取得（スキャンモードを渡す）
             pollPortScanResults(targetHost, scanMode);
         } else {
             showNotification('ポートスキャンに失敗しました: ' + data.message, 'error');
@@ -444,9 +444,18 @@ function updateScanProgress(host, stage, command = '') {
 }
 
 // タブUIを作成（優先ポート・全ポートのタブを初期表示）
-function createPortScanTabs(host) {
+function createPortScanTabs(host, scanMode) {
     const portsDiv = document.getElementById(`ports-${host.replace(/\./g, '-')}`);
     const hostKey = host.replace(/\./g, '-');
+
+    // スキャンモードに応じた初期メッセージ
+    const priorityInitialMessage = (scanMode === 'priority' || scanMode === 'both')
+        ? '<div><input type="checkbox" disabled> 優先ポートスキャン待機中...</div>'
+        : '<div style="color: #999;">このスキャンは実行されていません。<br>再度ポートスキャンを実行してモード選択してください。</div>';
+
+    const fullInitialMessage = (scanMode === 'full' || scanMode === 'both')
+        ? '<div><input type="checkbox" disabled> 並列スキャン待機中（6スレッド）...</div>'
+        : '<div style="color: #999;">このスキャンは実行されていません。<br>再度ポートスキャンを実行してモード選択してください。</div>';
 
     portsDiv.innerHTML = `
         <div class="port-scan-tabs" style="margin-top: 15px;">
@@ -473,7 +482,7 @@ function createPortScanTabs(host) {
                     <div style="background: #f7fafc; padding: 12px; border-radius: 6px;">
                         <h4 style="margin: 0 0 8px 0; color: #4a5568; font-size: 0.95rem;">📌 優先ポートスキャン進捗</h4>
                         <div id="priority-progress-${hostKey}" style="font-size: 0.85rem;">
-                            <div><input type="checkbox" disabled> 優先ポートスキャン待機中...</div>
+                            ${priorityInitialMessage}
                         </div>
                     </div>
                     <div id="priority-results-${hostKey}" style="margin-top: 12px;"></div>
@@ -484,7 +493,7 @@ function createPortScanTabs(host) {
                     <div style="background: #f7fafc; padding: 12px; border-radius: 6px;">
                         <h4 style="margin: 0 0 8px 0; color: #4a5568; font-size: 0.95rem;">🔍 全ポートスキャン進捗</h4>
                         <div id="full-progress-${hostKey}" style="font-size: 0.85rem;">
-                            <div><input type="checkbox" disabled> 並列スキャン待機中（6スレッド）...</div>
+                            ${fullInitialMessage}
                         </div>
                         <div id="full-scan-progress-bar-container-${hostKey}" style="display: none; margin-top: 15px;">
                             <div style="width: 100%; background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden;">
@@ -670,22 +679,32 @@ function updateTabProgress(host, tabName, stage, progressData = null) {
 }
 
 // ポートスキャン結果をポーリング（並列スキャン対応・タブUI版）
-async function pollPortScanResults(host) {
+async function pollPortScanResults(host, scanMode) {
     const maxAttempts = 300; // 最大5分間ポーリング
     let attempts = 0;
     let priorityDisplayed = false;
     let fullDisplayed = false;
     let fullScanStartTime = null;
 
+    // スキャンモードに応じて待機するステージを決定
+    const waitForPriority = (scanMode === 'priority' || scanMode === 'both');
+    const waitForFull = (scanMode === 'full' || scanMode === 'both');
+
     const pollInterval = setInterval(async () => {
         attempts++;
 
-        // 進捗ステージを更新（時間経過に基づく）
+        // 進捗ステージを更新（時間経過に基づく、スキャンモードに応じて）
         if (attempts === 2) {
-            updateTabProgress(host, 'priority', 'detecting');
-            updateTabProgress(host, 'full', 'detecting');
+            if (waitForPriority) {
+                updateTabProgress(host, 'priority', 'detecting');
+            }
+            if (waitForFull) {
+                updateTabProgress(host, 'full', 'detecting');
+            }
         } else if (attempts === 5) {
-            updateTabProgress(host, 'priority', 'analyzing');
+            if (waitForPriority) {
+                updateTabProgress(host, 'priority', 'analyzing');
+            }
         }
 
         try {
@@ -696,39 +715,53 @@ async function pollPortScanResults(host) {
                 const currentStage = data.data.scan_stage;
                 const currentPorts = data.data.ports || [];
 
-                // 優先ポートスキャン結果が来た場合
-                if (currentStage === 'priority' && !priorityDisplayed) {
+                // 優先ポートスキャン結果が来た場合（優先ポートを待機している場合のみ処理）
+                if (currentStage === 'priority' && !priorityDisplayed && waitForPriority) {
                     priorityDisplayed = true;
                     fullScanStartTime = attempts;
                     updateTabProgress(host, 'priority', 'complete');
                     displayPortResults(host, data.data, 'priority');
+
+                    // 優先ポートのみの場合はここで完了
+                    if (scanMode === 'priority') {
+                        clearInterval(pollInterval);
+                    }
                 }
 
-                // 全ポートスキャン実行中の進捗％を更新（progressデータを使用）
-                if (currentStage === 'full_scanning' && !fullDisplayed) {
+                // 全ポートスキャン実行中の進捗％を更新（全ポートを待機している場合のみ処理）
+                if (currentStage === 'full_scanning' && !fullDisplayed && waitForFull) {
                     if (!fullScanStartTime) fullScanStartTime = attempts;
                     // 実際の進捗データを渡す
                     updateTabProgress(host, 'full', 'scanning', data.data);
                 }
 
-                // 全ポートスキャン結果が来た場合
-                if (currentStage === 'full' && !fullDisplayed) {
+                // 全ポートスキャン結果が来た場合（全ポートを待機している場合のみ処理）
+                if (currentStage === 'full' && !fullDisplayed && waitForFull) {
                     fullDisplayed = true;
                     updateTabProgress(host, 'full', 'complete');
                     displayPortResults(host, data.data, 'full');
                     clearInterval(pollInterval);
                 }
             } else if (attempts >= maxAttempts) {
-                // タイムアウト
-                updateTabProgress(host, 'priority', 'error');
-                updateTabProgress(host, 'full', 'error');
+                // タイムアウト（実行中のスキャンのみエラー表示）
+                if (waitForPriority) {
+                    updateTabProgress(host, 'priority', 'error');
+                }
+                if (waitForFull) {
+                    updateTabProgress(host, 'full', 'error');
+                }
                 clearInterval(pollInterval);
             }
         } catch (error) {
             console.error('結果取得エラー:', error);
             if (attempts >= maxAttempts) {
-                updateTabProgress(host, 'priority', 'error');
-                updateTabProgress(host, 'full', 'error');
+                // タイムアウト（実行中のスキャンのみエラー表示）
+                if (waitForPriority) {
+                    updateTabProgress(host, 'priority', 'error');
+                }
+                if (waitForFull) {
+                    updateTabProgress(host, 'full', 'error');
+                }
                 clearInterval(pollInterval);
             }
         }
