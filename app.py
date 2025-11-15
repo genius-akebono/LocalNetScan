@@ -199,18 +199,17 @@ def start_port_scan(host):
         try:
             print(f"\n{'='*60}")
             print(f"[2段階スキャン開始] {host}")
-            print(f"第1段階: ポート検出（6スレッド並列）")
+            print(f"第1段階: ポート検出（5スレッド並列）")
             print(f"第2段階: サービス情報取得（発見したポートのみ）")
             print(f"{'='*60}")
 
-            # 全ポートを6つの範囲に分割して並列スキャン
+            # 全ポートを5つの範囲に分割して並列スキャン
             port_ranges = [
-                (1, 10922),
-                (10923, 21844),
-                (21845, 32766),
-                (32767, 43688),
-                (43689, 54610),
-                (54611, 65535)
+                (1, 13107),
+                (13108, 26214),
+                (26215, 39321),
+                (39322, 52428),
+                (52429, 65535)
             ]
 
             # ===== 第1段階: ポート検出（全範囲を並列スキャン） =====
@@ -224,7 +223,7 @@ def start_port_scan(host):
                     print(f"  [範囲 {start}-{end}] ポートスキャン中...")
                     # -sT: TCP接続スキャン, -T5: 最速, --open: オープンポートのみ, -sVなし
                     range_args = f"-p {start}-{end} -sT -T5 --open"
-                    result = scanner.port_scan(host, range_args, priority_only=False, is_range_scan=True)
+                    result = scanner.port_scan(host, range_args, priority_only=False, is_range_scan=True, verbose=False)
 
                     if result.get('ports') and len(result['ports']) > 0:
                         print(f"  [範囲 {start}-{end}] ✓ {len(result['ports'])}個のポートを発見")
@@ -253,29 +252,80 @@ def start_port_scan(host):
                 if 'ports' in result:
                     all_open_ports.extend(result['ports'])
 
-            # ===== 第2段階: サービス情報取得 =====
+            # ===== 第2段階: サービス情報取得（5スレッド並列） =====
             if len(all_open_ports) > 0:
-                print(f"\n[第2段階] サービス情報取得開始...")
+                print(f"\n[第2段階] サービス情報取得開始（5スレッド並列）...")
                 print(f"  発見したポート数: {len(all_open_ports)}個")
 
-                # ポート番号のみ抽出
-                port_numbers = [str(p['port']) for p in all_open_ports]
-                ports_str = ','.join(port_numbers)
+                # ポート番号のみ抽出してソート
+                port_numbers = sorted([p['port'] for p in all_open_ports])
 
-                print(f"  対象ポート: {ports_str}")
-                print(f"  サービス情報を取得中...")
+                # ポートを5グループに分割（できるだけ均等に）
+                chunk_size = max(1, len(port_numbers) // 5)
+                port_chunks = []
+                for i in range(0, len(port_numbers), chunk_size):
+                    chunk = port_numbers[i:i + chunk_size]
+                    if chunk:
+                        port_chunks.append(chunk)
 
-                # 発見したポートのみサービス情報を取得
-                service_args = f"-p {ports_str} -sV -T5"
-                service_result = scanner.port_scan(host, service_args, priority_only=False, is_range_scan=True)
+                # 最後の小さなチャンクを前のチャンクに統合（5つを超えた場合）
+                if len(port_chunks) > 5:
+                    last_chunk = port_chunks.pop()
+                    port_chunks[-1].extend(last_chunk)
+
+                print(f"  ポートを{len(port_chunks)}グループに分割")
+                for idx, chunk in enumerate(port_chunks, 1):
+                    print(f"    グループ{idx}: {len(chunk)}ポート ({chunk[0]}-{chunk[-1]})")
+
+                # サービス情報取得を並列実行
+                service_results = []
+                service_threads = []
+
+                def scan_service_info(port_list, group_num):
+                    """指定ポートのサービス情報を取得"""
+                    try:
+                        ports_str = ','.join(map(str, port_list))
+                        print(f"  [グループ{group_num}] サービス情報取得中... ({len(port_list)}ポート)")
+
+                        # -sV: サービスバージョン検出, -T5: 最速
+                        service_args = f"-p {ports_str} -sV -T5"
+                        result = scanner.port_scan(host, service_args, priority_only=False, is_range_scan=True, verbose=False)
+
+                        if result.get('ports'):
+                            print(f"  [グループ{group_num}] ✓ {len(result['ports'])}ポートの情報取得完了")
+                            service_results.append(result)
+                        else:
+                            print(f"  [グループ{group_num}] 情報取得なし")
+                    except Exception as e:
+                        print(f"  [グループ{group_num}] エラー: {e}")
+
+                # サービス情報取得を並列実行
+                for idx, chunk in enumerate(port_chunks, 1):
+                    thread = threading.Thread(target=scan_service_info, args=(chunk, idx))
+                    thread.daemon = True
+                    thread.start()
+                    service_threads.append(thread)
+
+                # 全スレッドの完了を待つ
+                for thread in service_threads:
+                    thread.join()
 
                 print(f"\n[第2段階完了] サービス情報取得が完了しました")
+
+                # 結果を統合
+                final_ports = []
+                for result in service_results:
+                    if 'ports' in result:
+                        final_ports.extend(result['ports'])
+
+                # ポート番号順にソート
+                final_ports.sort(key=lambda x: x['port'])
 
                 # 最終結果
                 merged_result = {
                     'host': host,
-                    'ports': service_result.get('ports', all_open_ports),
-                    'os': service_result.get('os', ''),
+                    'ports': final_ports if final_ports else all_open_ports,
+                    'os': service_results[0].get('os', '') if service_results else '',
                     'scan_time': '',
                     'scan_stage': 'full'
                 }
